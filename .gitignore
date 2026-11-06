@@ -1,0 +1,12 @@
+# Xcode
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+.build/
+
+# Secrets — never commit real OAuth client secret
+Sources/Config/Secrets.plist
+
+# macOS
+.DS_Store
