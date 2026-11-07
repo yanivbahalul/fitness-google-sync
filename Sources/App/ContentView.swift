@@ -336,6 +336,8 @@ private struct TodayCard: View {
 private struct EnergyCard: View {
     @EnvironmentObject private var sync: SyncCoordinator
     @AppStorage(AppSettings.deficitGoalKey) private var goal = 500
+    @State private var editingEaten = false
+    @State private var eatenText = ""
 
     var body: some View {
         Card {
@@ -354,8 +356,27 @@ private struct EnergyCard: View {
             if let energy = sync.energy {
                 HStack(spacing: 10) {
                     EnergyTile(title: "נשרפו", value: energy.burned, symbol: "flame.fill", color: .orange)
-                    EnergyTile(title: "נאכלו", value: energy.eaten, symbol: "fork.knife", color: .teal)
+                    Button {
+                        eatenText = energy.eaten > 0 ? String(energy.eaten) : ""
+                        editingEaten = true
+                    } label: {
+                        EnergyTile(title: "נאכלו", value: energy.eaten, symbol: "fork.knife", color: .teal,
+                                   badge: "pencil")
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("הקש כדי להזין את הקלוריות שנאכלו היום")
                 }
+
+                Button {
+                    eatenText = energy.eaten > 0 ? String(energy.eaten) : ""
+                    editingEaten = true
+                } label: {
+                    Label("עדכן נאכלו", systemImage: "square.and.pencil")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 40)
+                }
+                .buttonStyle(.bordered)
+                .tint(.teal)
 
                 if let deficit = energy.deficit {
                     let reached = deficit >= goal
@@ -384,11 +405,9 @@ private struct EnergyCard: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if energy.eaten == 0 {
-                    Notice(symbol: "info.circle.fill", color: .teal,
-                           text: "לא נמצאו קלוריות שנאכלו היום ב‑Apple Health. ב‑Cali הפעל שיתוף ל‑Apple Health (קלוריות / אנרגיה תזונתית).")
-                }
-                Text("נשרפו = סך הקלוריות מהצמיד (כולל מנוחה) עד עכשיו. נאכלו = מה שנרשם ב‑Apple Health, למשל מ‑Cali.")
+                Text(energy.eatenIsManual
+                     ? "נשרפו = סך הקלוריות מהצמיד (כולל מנוחה) עד עכשיו. נאכלו = מה שהזנת היום."
+                     : "נשרפו = סך הקלוריות מהצמיד (כולל מנוחה) עד עכשיו. הקש \"עדכן נאכלו\" כדי להזין את הסך מ‑Cali.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             } else {
@@ -396,6 +415,20 @@ private struct EnergyCard: View {
             }
         }
         .task { if sync.energy == nil { await sync.refreshEnergy() } }
+        .alert("כמה קלוריות נאכלו היום?", isPresented: $editingEaten) {
+            TextField("קק\"ל", text: $eatenText)
+                .keyboardType(.numberPad)
+            Button("שמור") {
+                let digits = eatenText.filter(\.isNumber)
+                sync.setManualEatenToday(Int(digits))
+            }
+            if sync.manualEatenToday != nil {
+                Button("מחק הזנה", role: .destructive) { sync.setManualEatenToday(nil) }
+            }
+            Button("ביטול", role: .cancel) {}
+        } message: {
+            Text("הקלד את הסך היומי שמופיע ב‑Cali.")
+        }
     }
 }
 
@@ -404,12 +437,21 @@ private struct EnergyTile: View {
     let value: Int?
     let symbol: String
     let color: Color
+    var badge: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Image(systemName: symbol)
-                .foregroundStyle(color)
-                .accessibilityHidden(true)
+            HStack {
+                Image(systemName: symbol)
+                    .foregroundStyle(color)
+                Spacer()
+                if let badge {
+                    Image(systemName: badge)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityHidden(true)
             Text(value.map { $0.formatted() } ?? "—")
                 .font(.title2.bold())
                 .monospacedDigit()

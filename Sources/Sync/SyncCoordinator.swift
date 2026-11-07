@@ -54,6 +54,8 @@ struct SyncOutcome {
 struct EnergyBalance: Equatable {
     var burned: Int?
     var eaten: Int
+    /// True when "eaten" was typed in by hand (e.g. copied from a food app).
+    var eatenIsManual: Bool
     var updated: Date
 
     /// Positive = deficit (burned more than eaten).
@@ -290,8 +292,35 @@ final class SyncCoordinator: ObservableObject {
         do {
             try await healthKitWriter.requestAuthorization(toShare: [], read: [HKQuantityType(.dietaryEnergyConsumed)])
         } catch {}
-        let eaten = (try? await healthKitWriter.todayTotal(.dietaryEnergyConsumed, unit: .kilocalorie())) ?? 0
-        energy = EnergyBalance(burned: burned, eaten: Int(eaten.rounded()), updated: Date())
+        let fromHealth = (try? await healthKitWriter.todayTotal(.dietaryEnergyConsumed, unit: .kilocalorie())) ?? 0
+        if let manual = manualEatenToday {
+            energy = EnergyBalance(burned: burned, eaten: manual, eatenIsManual: true, updated: Date())
+        } else {
+            energy = EnergyBalance(burned: burned, eaten: Int(fromHealth.rounded()), eatenIsManual: false, updated: Date())
+        }
+    }
+
+    /// Calories eaten today, typed in by hand (stored per day).
+    var manualEatenToday: Int? {
+        let key = Self.manualEatenKey(for: Date())
+        return UserDefaults.standard.object(forKey: key) as? Int
+    }
+
+    /// Sets (or clears, with nil) today's hand-entered calories and updates the balance.
+    func setManualEatenToday(_ kcal: Int?) {
+        let key = Self.manualEatenKey(for: Date())
+        if let kcal { UserDefaults.standard.set(kcal, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) }
+        if var current = energy, let kcal {
+            current.eaten = kcal
+            current.eatenIsManual = true
+            energy = current
+        }
+        Task { await refreshEnergy() }
+    }
+
+    private static func manualEatenKey(for date: Date) -> String {
+        let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        return "manualEaten-\(c.year ?? 0)-\(c.month ?? 0)-\(c.day ?? 0)"
     }
 
     private func finish(_ outcome: SyncOutcome, trigger: SyncTrigger, rangeTitle: String) {
