@@ -1,12 +1,50 @@
 import Foundation
 import HealthKit
 
+/// Groups shown as cards in the UI.
+enum SyncCategory: String, CaseIterable, Identifiable {
+    case activity, heart, sleep, body, nutrition
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .activity: return "פעילות"
+        case .heart: return "לב ונשימה"
+        case .sleep: return "שינה"
+        case .body: return "מדדי גוף"
+        case .nutrition: return "תזונה"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .activity: return "flame.fill"
+        case .heart: return "heart.fill"
+        case .sleep: return "bed.double.fill"
+        case .body: return "figure.stand"
+        case .nutrition: return "fork.knife"
+        }
+    }
+}
+
 /// One Google Health data type → one Apple Health type.
-struct SyncItem {
+struct SyncItem: Identifiable {
     let name: String
     let hkType: HKSampleType
     /// Fetches from Google Health and converts to HealthKit samples starting at/after `since`.
     let fetch: (_ client: GoogleHealthClient, _ since: Date, _ now: Date) async throws -> [HKSample]
+    var category: SyncCategory = .activity
+    var symbol: String = "circle"
+
+    /// Stable id (the HealthKit type identifier), used to remember selections.
+    var id: String { hkType.identifier }
+
+    func tagged(_ category: SyncCategory, _ symbol: String) -> SyncItem {
+        var copy = self
+        copy.category = category
+        copy.symbol = symbol
+        return copy
+    }
 }
 
 /// Everything StepsBridge syncs. Field names follow the Google Health API v4 reference
@@ -19,43 +57,43 @@ enum SyncCatalog {
         [
             // MARK: activity_and_fitness
             intervalSum(name: "צעדים", dataType: "steps", key: "steps", field: "count",
-                        hk: .stepCount, unit: .count()),
+                        hk: .stepCount, unit: .count()).tagged(.activity, "figure.walk"),
             intervalSum(name: "מרחק", dataType: "distance", key: "distance", field: "millimeters",
-                        hk: .distanceWalkingRunning, unit: .meter(), scale: 0.001),
+                        hk: .distanceWalkingRunning, unit: .meter(), scale: 0.001).tagged(.activity, "map.fill"),
             intervalSum(name: "קלוריות פעילות", dataType: "active-energy-burned", key: "activeEnergyBurned", field: "kcal",
-                        hk: .activeEnergyBurned, unit: .kilocalorie()),
+                        hk: .activeEnergyBurned, unit: .kilocalorie()).tagged(.activity, "flame.fill"),
             dailyRollUp(name: "קומות", dataType: "floors", valueKey: "floors",
-                        hk: .flightsClimbed, unit: .count()),
+                        hk: .flightsClimbed, unit: .count()).tagged(.activity, "figure.stairs"),
             samples(name: "VO2 Max", dataType: "vo2-max", key: "vo2Max", field: "vo2Max",
-                    hk: .vo2Max, unit: HKUnit(from: "ml/kg*min")),
-            workouts,
+                    hk: .vo2Max, unit: HKUnit(from: "ml/kg*min")).tagged(.activity, "lungs.fill"),
+            workouts.tagged(.activity, "figure.run"),
 
             // MARK: health_metrics_and_measurements
-            heartRate,
+            heartRate.tagged(.heart, "heart.fill"),
             daily(name: "דופק במנוחה", dataType: "daily-resting-heart-rate", key: "dailyRestingHeartRate",
-                  field: "beatsPerMinute", hk: .restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute())),
+                  field: "beatsPerMinute", hk: .restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute())).tagged(.heart, "heart.text.square.fill"),
             // Apple Health stores HRV as SDNN; only write it when Google provides the SDNN value.
             samples(name: "HRV", dataType: "heart-rate-variability", key: "heartRateVariability",
-                    field: "standardDeviationMilliseconds", hk: .heartRateVariabilitySDNN, unit: .secondUnit(with: .milli)),
+                    field: "standardDeviationMilliseconds", hk: .heartRateVariabilitySDNN, unit: .secondUnit(with: .milli)).tagged(.heart, "waveform.path.ecg"),
             samples(name: "חמצן בדם", dataType: "oxygen-saturation", key: "oxygenSaturation", field: "percentage",
-                    hk: .oxygenSaturation, unit: .percent(), scale: 0.01),
+                    hk: .oxygenSaturation, unit: .percent(), scale: 0.01).tagged(.heart, "drop.fill"),
             daily(name: "קצב נשימה", dataType: "daily-respiratory-rate", key: "dailyRespiratoryRate",
-                  field: "breathsPerMinute", hk: .respiratoryRate, unit: HKUnit.count().unitDivided(by: .minute())),
+                  field: "breathsPerMinute", hk: .respiratoryRate, unit: HKUnit.count().unitDivided(by: .minute())).tagged(.heart, "wind"),
             samples(name: "משקל", dataType: "weight", key: "weight", field: "weightGrams",
-                    hk: .bodyMass, unit: .gram()),
+                    hk: .bodyMass, unit: .gram()).tagged(.body, "scalemass.fill"),
             samples(name: "אחוז שומן", dataType: "body-fat", key: "bodyFat", field: "percentage",
-                    hk: .bodyFatPercentage, unit: .percent(), scale: 0.01),
+                    hk: .bodyFatPercentage, unit: .percent(), scale: 0.01).tagged(.body, "percent"),
             samples(name: "גובה", dataType: "height", key: "height", field: "heightMillimeters",
-                    hk: .height, unit: .meter(), scale: 0.001),
+                    hk: .height, unit: .meter(), scale: 0.001).tagged(.body, "ruler.fill"),
 
             // MARK: sleep
-            sleep,
+            sleep.tagged(.sleep, "bed.double.fill"),
 
             // MARK: nutrition
             intervalSum(name: "שתייה", dataType: "hydration-log", key: "hydrationLog", field: "amountConsumed.milliliters",
-                        hk: .dietaryWater, unit: .literUnit(with: .milli), hourly: false),
+                        hk: .dietaryWater, unit: .literUnit(with: .milli), hourly: false).tagged(.nutrition, "waterbottle.fill"),
             intervalSum(name: "קלוריות מתזונה", dataType: "nutrition-log", key: "nutritionLog", field: "energy.kcal",
-                        hk: .dietaryEnergyConsumed, unit: .kilocalorie(), hourly: false),
+                        hk: .dietaryEnergyConsumed, unit: .kilocalorie(), hourly: false).tagged(.nutrition, "fork.knife"),
         ]
     }
 
