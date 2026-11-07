@@ -49,6 +49,17 @@ struct SyncOutcome {
     }
 }
 
+/// Today's calorie balance: burned (Google Health, includes resting metabolism) vs eaten
+/// (whatever food app writes to Apple Health, e.g. Cali).
+struct EnergyBalance: Equatable {
+    var burned: Int?
+    var eaten: Int
+    var updated: Date
+
+    /// Positive = deficit (burned more than eaten).
+    var deficit: Int? { burned.map { $0 - eaten } }
+}
+
 /// Today's highlights, computed from the data written in the last sync.
 struct TodaySummary: Codable, Equatable {
     var steps: Int?
@@ -70,6 +81,7 @@ final class SyncCoordinator: ObservableObject {
     @Published private(set) var status: [String: ItemStatus] = [:]
     @Published private(set) var history: [SyncLogEntry] = SyncHistory.load()
     @Published private(set) var today: TodaySummary?
+    @Published private(set) var energy: EnergyBalance?
 
     /// Which data types are switched on (persisted).
     @Published var enabled: Set<String> {
@@ -188,7 +200,7 @@ final class SyncCoordinator: ObservableObject {
 
         do {
             try await healthKitWriter.requestAuthorization(toShare: Set(selected.map(\.hkType)),
-                                                          read: [HKQuantityType(.stepCount)])
+                                                          read: [HKQuantityType(.stepCount), HKQuantityType(.dietaryEnergyConsumed)])
             // Refresh the access token once up front so the parallel requests share it.
             _ = try await auth.validAccessToken()
         } catch {
@@ -256,7 +268,30 @@ final class SyncCoordinator: ObservableObject {
             outcome.error = "הסנכרון נכשל. בדוק חיבור לאינטרנט, או התנתק והתחבר מחדש ל‑Google."
         }
         finish(outcome, trigger: trigger, rangeTitle: effectiveRange.title)
+        await refreshEnergy()
         return outcome
+    }
+
+    /// Recomputes today's calorie balance. Burned comes from Google's total-calories
+    /// (resting + active, like the band shows); eaten from Apple Health's dietary energy,
+    /// which calorie-tracking apps such as Cali write to.
+    func refreshEnergy() async {
+        guard auth.isSignedIn else { return }
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today)!
+
+        var burned: Int?
+        if let days = try? await healthClient.dailyRollUp(dataType: "total-calories", valueKey: "totalCalories",
+                                                          from: today, to: tomorrow),
+           let value = days.first(where: { calendar.isDate($0.day, inSameDayAs: today) })?.value {
+            burned = Int(value.rounded())
+        }
+        do {
+            try await healthKitWriter.requestAuthorization(toShare: [], read: [HKQuantityType(.dietaryEnergyConsumed)])
+        } catch {}
+        let eaten = (try? await healthKitWriter.todayTotal(.dietaryEnergyConsumed, unit: .kilocalorie())) ?? 0
+        energy = EnergyBalance(burned: burned, eaten: Int(eaten.rounded()), updated: Date())
     }
 
     private func finish(_ outcome: SyncOutcome, trigger: SyncTrigger, rangeTitle: String) {

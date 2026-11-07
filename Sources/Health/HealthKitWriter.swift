@@ -50,6 +50,27 @@ final class HealthKitWriter {
         }
     }
 
+    /// Today's total of a cumulative type across all sources (e.g. food logged in a
+    /// calorie-tracking app), using Apple Health's source-priority de-duplication.
+    func todayTotal(_ id: HKQuantityTypeIdentifier, unit: HKUnit) async throws -> Double {
+        let type = HKQuantityType(id)
+        let start = Calendar.current.startOfDay(for: Date())
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: nil, options: .strictStartDate)
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKStatisticsQuery(quantityType: type, quantitySamplePredicate: predicate,
+                                          options: .cumulativeSum) { _, stats, error in
+                if let error = error as? HKError, error.code == .errorNoData {
+                    continuation.resume(returning: 0)
+                } else if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: stats?.sumQuantity()?.doubleValue(for: unit) ?? 0)
+                }
+            }
+            store.execute(query)
+        }
+    }
+
     /// Replaces this app's samples of `type` that start on/after `since` with `samples`.
     /// Returns how many samples were written.
     @discardableResult

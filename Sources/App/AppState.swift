@@ -15,6 +15,7 @@ enum AppSettings {
     static let backgroundSyncKey = "backgroundSync"
     static let notifyProblemsKey = "notifyProblems"
     static let expiryReminderKey = "expiryReminder"
+    static let deficitGoalKey = "deficitGoal"
 
     static func registerDefaults() {
         UserDefaults.standard.register(defaults: [
@@ -22,6 +23,7 @@ enum AppSettings {
             backgroundSyncKey: true,
             notifyProblemsKey: true,
             expiryReminderKey: true,
+            deficitGoalKey: 500,
         ])
     }
 

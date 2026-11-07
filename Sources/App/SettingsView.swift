@@ -10,6 +10,7 @@ struct SettingsView: View {
     @AppStorage(AppSettings.backgroundSyncKey) private var backgroundSync = true
     @AppStorage(AppSettings.notifyProblemsKey) private var notifyProblems = true
     @AppStorage(AppSettings.expiryReminderKey) private var expiryReminder = true
+    @AppStorage(AppSettings.deficitGoalKey) private var deficitGoal = 500
 
     private let expiry = Notifier.signingExpiry
 
@@ -24,6 +25,22 @@ struct SettingsView: View {
                     }
                 } footer: {
                     Text("משווה לכל יום את הסך של Google Health מול מה ש‑StepsBridge כתב ומול מה ש‑Apple Health מציג.")
+                }
+
+                Section {
+                    Stepper(value: $deficitGoal, in: 0...2000, step: 50) {
+                        HStack {
+                            SettingLabel("יעד גרעון יומי", symbol: "target", color: .green)
+                            Spacer()
+                            Text("\(deficitGoal.formatted()) קק\"ל")
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } header: {
+                    Text("מאזן קלורי")
+                } footer: {
+                    Text("גרעון של כ‑500 קק\"ל ביום הוא בערך חצי קילו בשבוע. הקלוריות שנאכלו נקראות מ‑Apple Health (למשל מ‑Cali), והקלוריות שנשרפו מ‑Google Health.")
                 }
 
                 Section {

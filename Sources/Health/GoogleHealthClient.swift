@@ -161,10 +161,15 @@ final class GoogleHealthClient {
         let points = (json["rollupDataPoints"] as? [[String: Any]]) ?? []
         return points.compactMap { point in
             guard let day = GoogleHealthJSON.civilDate(point["civilStartTime"]),
-                  let value = GoogleHealthJSON.firstNumber(in: point[valueKey])
+                  let value = GoogleHealthJSON.sumNumber(in: point[valueKey] ?? Self.rollupValue(in: point))
             else { return nil }
             return (day, value)
         }
+    }
+
+    /// The value object of a rollup point when its key isn't the one we expected.
+    private static func rollupValue(in point: [String: Any]) -> Any? {
+        point.first { !$0.key.lowercased().hasPrefix("civil") && !$0.key.hasSuffix("Time") }?.value
     }
 
     private func send(_ request: URLRequest) async throws -> [String: Any] {

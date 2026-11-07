@@ -13,6 +13,7 @@ struct ContentView: View {
                     HeaderCard()
                     if auth.isSignedIn {
                         SyncCard()
+                        EnergyCard()
                         if let today = sync.today {
                             TodayCard(today: today)
                         }
@@ -327,6 +328,101 @@ private struct TodayCard: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Calorie balance
+
+private struct EnergyCard: View {
+    @EnvironmentObject private var sync: SyncCoordinator
+    @AppStorage(AppSettings.deficitGoalKey) private var goal = 500
+
+    var body: some View {
+        Card {
+            HStack {
+                Label("מאזן קלורי היום", systemImage: "chart.bar.xaxis")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    Task { await sync.refreshEnergy() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .accessibilityLabel("רענן מאזן קלורי")
+            }
+
+            if let energy = sync.energy {
+                HStack(spacing: 10) {
+                    EnergyTile(title: "נשרפו", value: energy.burned, symbol: "flame.fill", color: .orange)
+                    EnergyTile(title: "נאכלו", value: energy.eaten, symbol: "fork.knife", color: .teal)
+                }
+
+                if let deficit = energy.deficit {
+                    let reached = deficit >= goal
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(deficit >= 0 ? "גרעון" : "עודף")
+                                .font(.subheadline.weight(.semibold))
+                            Spacer()
+                            Text("\(abs(deficit).formatted()) קק\"ל")
+                                .font(.title2.bold())
+                                .monospacedDigit()
+                                .foregroundStyle(deficit >= 0 ? .green : .orange)
+                        }
+                        ProgressView(value: Double(max(0, min(deficit, goal))), total: Double(max(goal, 1)))
+                            .tint(reached ? .green : Theme.blue)
+                        Text(reached
+                             ? "הגעת ליעד הגרעון היומי (\(goal.formatted()) קק\"ל) 🎉"
+                             : "יעד: \(goal.formatted()) קק\"ל גרעון · נשארו \(max(0, goal - deficit).formatted())")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                } else {
+                    Text("עוד אין נתון של קלוריות שנשרפו היום מ‑Google.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                if energy.eaten == 0 {
+                    Notice(symbol: "info.circle.fill", color: .teal,
+                           text: "לא נמצאו קלוריות שנאכלו היום ב‑Apple Health. ב‑Cali הפעל שיתוף ל‑Apple Health (קלוריות / אנרגיה תזונתית).")
+                }
+                Text("נשרפו = סך הקלוריות מהצמיד (כולל מנוחה) עד עכשיו. נאכלו = מה שנרשם ב‑Apple Health, למשל מ‑Cali.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                HStack { ProgressView(); Text("מחשב…").foregroundStyle(.secondary) }
+            }
+        }
+        .task { if sync.energy == nil { await sync.refreshEnergy() } }
+    }
+}
+
+private struct EnergyTile: View {
+    let title: String
+    let value: Int?
+    let symbol: String
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Image(systemName: symbol)
+                .foregroundStyle(color)
+                .accessibilityHidden(true)
+            Text(value.map { $0.formatted() } ?? "—")
+                .font(.title2.bold())
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text("\(title) (קק\"ל)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 }
 
