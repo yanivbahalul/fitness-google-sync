@@ -296,6 +296,57 @@ final class SyncCoordinator: ObservableObject {
         return cache.filter { $0.key >= start }
     }
 
+    private func finish(_ outcome: SyncOutcome, trigger: SyncTrigger, rangeTitle: String) {
+        if trigger == .manual || trigger == .appOpen {
+            lastError = outcome.error
+        }
+        history = SyncHistory.append(SyncLogEntry(
+            date: Date(), trigger: trigger, rangeTitle: rangeTitle,
+            records: outcome.records, syncedTypes: outcome.syncedTypes, failedTypes: outcome.failedTypes))
+
+        // Tell the user about problems in syncs they didn't start by hand.
+        guard trigger != .manual, AppSettings.notifyProblems else { return }
+        if needsReconnect {
+            Notifier.notify(title: "HealthBridge צריך חיבור מחדש",
+                            body: "פתח את האפליקציה, התנתק והתחבר מחדש ל‑Google כדי שהסנכרון ימשיך.",
+                            id: "reconnect")
+        } else if let error = outcome.error {
+            Notifier.notify(title: "הסנכרון של HealthBridge נכשל", body: error, id: "sync-failed")
+        }
+    }
+
+    private static func addToToday(_ summary: inout TodaySummary, item: SyncItem, samples: [HKSample], now: Date) {
+        let calendar = Calendar.current
+        let startOfToday = calendar.startOfDay(for: now)
+        let todays = samples.compactMap { $0 as? HKQuantitySample }.filter { $0.startDate >= startOfToday }
+
+        switch item.hkType.identifier {
+        case HKQuantityTypeIdentifier.stepCount.rawValue:
+            summary.steps = Int(todays.reduce(0) { $0 + $1.quantity.doubleValue(for: .count()) })
+        case HKQuantityTypeIdentifier.activeEnergyBurned.rawValue:
+            summary.activeKcal = Int(todays.reduce(0) { $0 + $1.quantity.doubleValue(for: .kilocalorie()) })
+        case HKQuantityTypeIdentifier.restingHeartRate.rawValue:
+            let bpm = HKUnit.count().unitDivided(by: .minute())
+            let all = samples.compactMap { $0 as? HKQuantitySample }.sorted { $0.startDate > $1.startDate }
+            if let latest = all.first { summary.restingHeartRate = Int(latest.quantity.doubleValue(for: bpm)) }
+        case HKCategoryTypeIdentifier.sleepAnalysis.rawValue:
+            // Last night: asleep stages that ended after yesterday 18:00.
+            let cutoff = calendar.date(byAdding: .hour, value: -6, to: startOfToday)!
+            let asleep: Set<Int> = [
+                HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue,
+                HKCategoryValueSleepAnalysis.asleepCore.rawValue,
+                HKCategoryValueSleepAnalysis.asleepDeep.rawValue,
+                HKCategoryValueSleepAnalysis.asleepREM.rawValue,
+            ]
+            let seconds = samples.compactMap { $0 as? HKCategorySample }
+                .filter { asleep.contains($0.value) && $0.endDate > cutoff }
+                .reduce(0.0) { $0 + $1.endDate.timeIntervalSince($1.startDate) }
+            if seconds > 0 { summary.sleepMinutes = Int(seconds / 60) }
+        default:
+            break
+        }
+    }
+
     // MARK: - Steps check
 
     struct StepsDay: Identifiable {
