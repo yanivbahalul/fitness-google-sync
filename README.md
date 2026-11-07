@@ -30,8 +30,14 @@ retired Fitbit Web API) — see <https://developers.google.com/health/about>.
    - Leave **Publishing status: Testing**. Do NOT publish/verify the app — that triggers
      Google's restricted-scope security review, which isn't worth it for personal use.
    - Under **Audience → Test users**, add your own Google account email.
-   - Under **Data access**, click "Add or remove scopes", search "Google Health API",
-     and add: `.../auth/googlehealth.activity_and_fitness.readonly`.
+   - Under **Data access**, click "Add or remove scopes" and, under "Manually add scopes",
+     paste these four (one per line), then Add to table → Update → Save:
+     ```
+     https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly
+     https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly
+     https://www.googleapis.com/auth/googlehealth.sleep.readonly
+     https://www.googleapis.com/auth/googlehealth.nutrition.readonly
+     ```
 4. Create the **OAuth client ID** (APIs & Services → Credentials → Create Credentials →
    OAuth client ID):
    - **Recommended: Application type = iOS**, Bundle ID = `com.yanivbahalul.stepsbridge`.
@@ -80,18 +86,35 @@ A GitHub Actions workflow (`.github/workflows/build.yml`) compiles the app on a 
 runner on every push (unsigned, with placeholder config), so you know the code builds
 before you open Xcode.
 
+## What gets synced (last 14 days, every Sync Now)
+
+| Google Health | Apple Health |
+|---|---|
+| steps, distance, active energy (summed per hour) | Steps, Walking + Running Distance, Active Energy |
+| floors (per day) | Flights Climbed |
+| heart rate (5-minute averages) | Heart Rate |
+| daily resting heart rate | Resting Heart Rate |
+| heart rate variability (SDNN, when provided) | Heart Rate Variability |
+| oxygen saturation | Blood Oxygen |
+| daily respiratory rate | Respiratory Rate |
+| sleep sessions + stages | Sleep (In Bed, Core, Deep, REM, Awake) |
+| exercise sessions | Workouts |
+| weight, body fat, height | Weight, Body Fat %, Height |
+| VO2 max | Cardio Fitness (VO2 max) |
+| hydration log, nutrition log energy | Water, Dietary Energy |
+
+Each sync deletes what StepsBridge itself wrote in the window and writes it fresh, so
+nothing duplicates. Each type syncs independently; the app lists per-type counts and errors.
+
 ## How it works
 
 - `Sources/Auth/GoogleAuthManager.swift` — OAuth 2.0 authorization-code + PKCE flow via
-  `ASWebAuthenticationSession`, token exchange/refresh against
-  `https://oauth2.googleapis.com/token`, refresh token stored in Keychain.
-- `Sources/Health/GoogleHealthClient.swift` — calls
-  `POST https://health.googleapis.com/v4/users/me/dataTypes/steps/dataPoints:dailyRollUp`
-  for the trailing 14 days.
-- `Sources/Health/HealthKitWriter.swift` — writes one `HKQuantitySample` per day into
-  Apple Health, tagged with metadata so re-syncing the same day overwrites instead of
-  duplicating.
-- `Sources/Sync/SyncCoordinator.swift` — orchestrates the two above on button tap.
+  `ASWebAuthenticationSession`, token refresh, refresh token stored in Keychain.
+- `Sources/Health/GoogleHealthClient.swift` — `dataPoints` list / `:reconcile` /
+  `:dailyRollUp` calls against `https://health.googleapis.com/v4/users/me/dataTypes/...`.
+- `Sources/Sync/SyncCatalog.swift` — the Google Health → HealthKit mapping table.
+- `Sources/Health/HealthKitWriter.swift` — replaces this app's samples per type.
+- `Sources/Sync/SyncCoordinator.swift` — runs every catalog item on Sync Now.
 
 ## Known limitations
 

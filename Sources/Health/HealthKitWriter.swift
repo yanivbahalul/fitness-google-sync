@@ -1,64 +1,57 @@
 import Foundation
 import HealthKit
 
-/// Writes daily step counts into Apple Health, tagged with a metadata key so
-/// re-running a sync for the same day updates rather than duplicates the entry.
+/// Writes synced data into Apple Health.
+///
+/// Every sync replaces what this app previously wrote for the sync window: for each
+/// type it deletes this app's own samples (HealthKit only lets an app delete what it
+/// wrote) starting at the window start, then saves the fresh samples. Re-syncing
+/// therefore never duplicates data.
 final class HealthKitWriter {
-    private let store = HKHealthStore()
-    private let stepType = HKQuantityType.quantityType(forIdentifier: .stepCount)!
-    private let sourceTag = "StepsBridge.googleHealthDailyTotal"
+    let store = HKHealthStore()
+    static let metadataKey = "StepsBridge.googleHealth"
 
-    func requestAuthorization() async throws {
+    func requestAuthorization(toShare types: Set<HKSampleType>) async throws {
         guard HKHealthStore.isHealthDataAvailable() else {
             throw HealthKitWriterError.notAvailable
         }
-        try await store.requestAuthorization(toShare: [stepType], read: [stepType])
+        try await store.requestAuthorization(toShare: types, read: [])
     }
 
-    /// Writes one cumulative step sample per day, replacing any sample this
-    /// app previously wrote for that same day.
-    func write(_ days: [DailySteps]) async throws {
-        for day in days {
-            try await replaceSample(for: day)
+    /// Replaces this app's samples of `type` that start on/after `since` with `samples`.
+    /// Returns how many samples were written.
+    @discardableResult
+    func replace(_ type: HKSampleType, since: Date, with samples: [HKSample]) async throws -> Int {
+        let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            HKQuery.predicateForObjects(from: HKSource.default()),
+            HKQuery.predicateForSamples(withStart: since, end: nil, options: .strictStartDate),
+        ])
+        try await deleteObjects(of: type, matching: predicate)
+
+        // Save in chunks to keep individual HealthKit transactions small.
+        let chunkSize = 2000
+        var index = 0
+        while index < samples.count {
+            let chunk = Array(samples[index..<min(index + chunkSize, samples.count)])
+            try await store.save(chunk)
+            index += chunkSize
         }
+        return samples.count
     }
 
-    private func replaceSample(for day: DailySteps) async throws {
-        let calendar = Calendar(identifier: .gregorian)
-        let startOfDay = calendar.startOfDay(for: day.day)
-        guard let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay) else { return }
-
-        try await deleteExistingSample(start: startOfDay, end: endOfDay)
-
-        let quantity = HKQuantity(unit: .count(), doubleValue: Double(day.stepCount))
-        let sample = HKQuantitySample(
-            type: stepType,
-            quantity: quantity,
-            start: startOfDay,
-            end: endOfDay,
-            metadata: [sourceTag: true]
-        )
-        try await store.save(sample)
-    }
-
-    private func deleteExistingSample(start: Date, end: Date) async throws {
-        let dayPredicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
-        let sourcePredicate = HKQuery.predicateForObjects(withMetadataKey: sourceTag)
-        let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [dayPredicate, sourcePredicate])
-
-        let existing: [HKSample] = try await withCheckedThrowingContinuation { continuation in
-            let query = HKSampleQuery(sampleType: stepType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
-                if let error {
+    private func deleteObjects(of type: HKObjectType, matching predicate: NSPredicate) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            store.deleteObjects(of: type, predicate: predicate) { _, _, error in
+                // "No data" is reported as an error by some iOS versions; ignore it.
+                if let error = error as? HKError, error.code == .errorNoData {
+                    continuation.resume()
+                } else if let error {
                     continuation.resume(throwing: error)
                 } else {
-                    continuation.resume(returning: samples ?? [])
+                    continuation.resume()
                 }
             }
-            store.execute(query)
         }
-
-        guard !existing.isEmpty else { return }
-        try await store.delete(existing)
     }
 }
 

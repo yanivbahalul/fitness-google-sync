@@ -26,8 +26,8 @@ targets:
         CFBundleShortVersionString: "1.0"
         CFBundleVersionString: "1"
         UILaunchScreen: {}
-        NSHealthShareUsageDescription: "StepsBridge reads your existing step data so it won't create duplicate entries when writing synced steps."
-        NSHealthUpdateUsageDescription: "StepsBridge writes step counts pulled from your Google Health account into Health."
+        NSHealthShareUsageDescription: "StepsBridge only manages the data it wrote itself, so re-syncing never creates duplicates."
+        NSHealthUpdateUsageDescription: "StepsBridge writes your Google Health data (activity, heart, sleep, body measurements, workouts, nutrition) into Health."
         CFBundleURLTypes:
           - CFBundleURLSchemes:
               - $(GOOGLE_OAUTH_REDIRECT_SCHEME)

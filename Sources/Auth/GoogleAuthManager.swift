@@ -9,7 +9,7 @@ import Foundation
 /// and developers.google.com/health/endpoints (fetched 2026-11-06):
 ///   - authorize: https://accounts.google.com/o/oauth2/v2/auth
 ///   - token:     https://oauth2.googleapis.com/token
-///   - scope:     https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly
+///   - scopes:    googlehealth.{activity_and_fitness,health_metrics_and_measurements,sleep,nutrition}.readonly
 @MainActor
 final class GoogleAuthManager: NSObject, ObservableObject {
     @Published private(set) var isSignedIn: Bool = false
@@ -18,7 +18,12 @@ final class GoogleAuthManager: NSObject, ObservableObject {
     private var accessToken: String?
     private var accessTokenExpiresAt: Date?
 
-    private let scope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
+    static let scopes = [
+        "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
+        "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
+        "https://www.googleapis.com/auth/googlehealth.sleep.readonly",
+        "https://www.googleapis.com/auth/googlehealth.nutrition.readonly",
+    ]
     private let authorizeURL = "https://accounts.google.com/o/oauth2/v2/auth"
     private let tokenURL = URL(string: "https://oauth2.googleapis.com/token")!
 
@@ -45,7 +50,8 @@ final class GoogleAuthManager: NSObject, ObservableObject {
             URLQueryItem(name: "response_type", value: "code"),
             URLQueryItem(name: "access_type", value: "offline"),
             URLQueryItem(name: "prompt", value: "consent"),
-            URLQueryItem(name: "scope", value: scope),
+            URLQueryItem(name: "scope", value: Self.scopes.joined(separator: " ")),
+            URLQueryItem(name: "include_granted_scopes", value: "true"),
             URLQueryItem(name: "code_challenge", value: challenge),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
         ]

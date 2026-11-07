@@ -31,20 +31,26 @@ struct ContentView: View {
                         Task { await sync.syncNow() }
                     } label: {
                         if sync.isSyncing {
-                            ProgressView()
+                            HStack {
+                                ProgressView()
+                                Text(sync.progress ?? "Syncing…")
+                                    .foregroundStyle(.secondary)
+                            }
                         } else {
                             Text("Sync Now")
                         }
                     }
                     .disabled(!auth.isSignedIn || sync.isSyncing)
 
-                    if let summary = sync.lastSyncSummary, let date = sync.lastSyncDate {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(summary)
-                            Text(date, style: .relative)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
+                    if let date = sync.lastSyncDate {
+                        Text("Last sync \(date, style: .relative) ago")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    if sync.needsReconnect {
+                        Text("Some data types need permission. Tap Disconnect, then Connect Google Health again and allow all requested access.")
+                            .font(.footnote)
+                            .foregroundStyle(.orange)
                     }
                     if let syncError = sync.lastError {
                         Text(syncError)
@@ -53,8 +59,29 @@ struct ContentView: View {
                     }
                 }
 
+                if !sync.results.isEmpty {
+                    Section("Last sync details") {
+                        ForEach(sync.results) { result in
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(result.name)
+                                Spacer()
+                                if let error = result.error {
+                                    Text(error)
+                                        .font(.caption)
+                                        .foregroundStyle(.red)
+                                        .multilineTextAlignment(.trailing)
+                                        .lineLimit(3)
+                                } else {
+                                    Text("\(result.count ?? 0)")
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Section {
-                    Text("Pulls your last 14 days of step totals from Google Health and writes them into Apple Health. Re-authentication may be needed about once a week while the Google OAuth client is in Testing mode.")
+                    Text("Pulls the last 14 days from Google Health (activity, heart, sleep, body measurements, workouts, nutrition) and writes them into Apple Health. Re-syncing replaces what StepsBridge wrote before, so nothing is duplicated. Re-authentication may be needed about once a week while the Google OAuth client is in Testing mode.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

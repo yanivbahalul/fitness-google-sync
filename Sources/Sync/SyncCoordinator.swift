@@ -2,17 +2,26 @@ import Foundation
 
 @MainActor
 final class SyncCoordinator: ObservableObject {
+    struct ItemResult: Identifiable {
+        let id = UUID()
+        let name: String
+        let count: Int?
+        let error: String?
+    }
+
     @Published var isSyncing = false
+    @Published var progress: String?
     @Published var lastSyncDate: Date?
-    @Published var lastSyncSummary: String?
+    @Published var results: [ItemResult] = []
     @Published var lastError: String?
+    @Published var needsReconnect = false
 
     private let auth: GoogleAuthManager
     private let healthClient: GoogleHealthClient
     private let healthKitWriter = HealthKitWriter()
 
     /// How many trailing days to pull on each manual sync. 14 gives enough
-    /// overlap to backfill a day you forgot to open the app on.
+    /// overlap to backfill days you forgot to open the app.
     private let syncWindowDays = 14
 
     init(auth: GoogleAuthManager) {
@@ -27,23 +36,34 @@ final class SyncCoordinator: ObservableObject {
         }
         isSyncing = true
         lastError = nil
-        defer { isSyncing = false }
+        needsReconnect = false
+        results = []
+        defer { isSyncing = false; progress = nil }
 
+        let items = SyncCatalog.all
         do {
-            try await healthKitWriter.requestAuthorization()
-
-            let calendar = Calendar(identifier: .gregorian)
-            let end = calendar.startOfDay(for: Date()).addingTimeInterval(86400) // through today
-            guard let start = calendar.date(byAdding: .day, value: -syncWindowDays, to: end) else { return }
-
-            let days = try await healthClient.dailySteps(from: start, to: end)
-            try await healthKitWriter.write(days)
-
-            lastSyncDate = Date()
-            let total = days.reduce(0) { $0 + $1.stepCount }
-            lastSyncSummary = "Synced \(days.count) day(s), \(total) total steps."
+            try await healthKitWriter.requestAuthorization(toShare: SyncCatalog.shareTypes)
         } catch {
             lastError = error.localizedDescription
+            return
         }
+
+        let now = Date()
+        let since = Calendar.current.date(byAdding: .day, value: -syncWindowDays, to: Calendar.current.startOfDay(for: now))!
+
+        for item in items {
+            progress = "Syncing \(item.name)…"
+            do {
+                let samples = try await item.fetch(healthClient, since, now)
+                let written = try await healthKitWriter.replace(item.hkType, since: since, with: samples)
+                results.append(ItemResult(name: item.name, count: written, error: nil))
+            } catch let error as GoogleHealthError where error.isPermissionDenied {
+                needsReconnect = true
+                results.append(ItemResult(name: item.name, count: nil, error: "No permission"))
+            } catch {
+                results.append(ItemResult(name: item.name, count: nil, error: error.localizedDescription))
+            }
+        }
+        lastSyncDate = Date()
     }
 }
