@@ -42,8 +42,19 @@ struct ContentView: View {
                     }
                     .disabled(!auth.isSignedIn || sync.isSyncing)
 
+                    Button("Full resync (14 days)") {
+                        Task { await sync.syncNow(full: true) }
+                    }
+                    .font(.footnote)
+                    .disabled(!auth.isSignedIn || sync.isSyncing)
+
                     if let date = sync.lastSyncDate {
                         Text("Last sync \(date, style: .relative) ago")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let from = sync.syncedFrom, !sync.results.isEmpty {
+                        Text("Synced data from \(from, style: .date)")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -81,7 +92,7 @@ struct ContentView: View {
                 }
 
                 Section {
-                    Text("Pulls the last 14 days from Google Health (activity, heart, sleep, body measurements, workouts, nutrition) and writes them into Apple Health. Re-syncing replaces what StepsBridge wrote before, so nothing is duplicated. Re-authentication may be needed about once a week while the Google OAuth client is in Testing mode.")
+                    Text("Sync Now pulls since the day before your last sync (yesterday + today when you sync daily); the first sync and Full resync pull 14 days. Data comes from Google Health (activity, heart, sleep, body measurements, workouts, nutrition) and writes them into Apple Health. Re-syncing replaces what StepsBridge wrote before, so nothing is duplicated. Re-authentication may be needed about once a week while the Google OAuth client is in Testing mode.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
