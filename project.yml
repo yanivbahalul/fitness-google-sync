@@ -26,6 +26,7 @@ targets:
         CFBundleShortVersionString: "1.0"
         CFBundleVersionString: "1"
         UILaunchScreen: {}
+        NSCameraUsageDescription: "HealthBridge uses the camera to photograph meals and scan food barcodes."
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         UISupportedInterfaceOrientations~ipad:

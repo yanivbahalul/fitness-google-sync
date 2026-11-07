@@ -134,12 +134,14 @@ final class GoogleHealthClient {
 
     /// One total per civil day in [start, end) for `dataType`, read from the
     /// rollup value stored under `valueKey` (e.g. "floors").
-    func dailyRollUp(dataType: String, valueKey: String, from start: Date, to end: Date) async throws -> [(day: Date, value: Double)] {
-        // The API allows at most 90 days per request; ask for 30 at a time.
+    func dailyRollUp(dataType: String, valueKey: String, from start: Date, to end: Date,
+                     chunkDays: Int = 30) async throws -> [(day: Date, value: Double)] {
+        // The API allows at most 90 days per request (14 for total-calories, heart-rate,
+        // active-minutes and calories-in-heart-rate-zone).
         var results: [(day: Date, value: Double)] = []
         var chunkStart = start
         while chunkStart < end {
-            let chunkEnd = min(end, Calendar.current.date(byAdding: .day, value: 30, to: chunkStart)!)
+            let chunkEnd = min(end, Calendar.current.date(byAdding: .day, value: chunkDays, to: chunkStart)!)
             results += try await dailyRollUpChunk(dataType: dataType, valueKey: valueKey, from: chunkStart, to: chunkEnd)
             chunkStart = chunkEnd
         }

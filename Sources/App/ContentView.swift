@@ -2,29 +2,30 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var auth: GoogleAuthManager
-    @EnvironmentObject private var sync: SyncCoordinator
     @State private var showSettings = false
     @State private var showHistory = false
+    /// 0 = sync, 1 = nutrition. Swipe sideways or tap the picker to switch.
+    @AppStorage("selectedPage") private var page = 0
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 16) {
-                    HeaderCard()
-                    if auth.isSignedIn {
-                        SyncCard()
-                        EnergyCard()
-                        ForEach(SyncCategory.allCases) { category in
-                            CategoryCard(category: category)
-                        }
-                    } else {
-                        ConnectCard()
-                    }
+            VStack(spacing: 0) {
+                Picker("מסך", selection: $page) {
+                    Label("סנכרון", systemImage: "arrow.triangle.2.circlepath").tag(0)
+                    Label("תזונה", systemImage: "fork.knife").tag(1)
                 }
+                .pickerStyle(.segmented)
                 .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+                .padding(.vertical, 8)
+
+                TabView(selection: $page) {
+                    SyncPage().tag(0)
+                    NutritionPage().tag(1)
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
             }
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .navigationTitle("HealthBridge")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -44,6 +45,29 @@ struct ContentView: View {
             .sheet(isPresented: $showHistory) { HistoryView() }
         }
         .environment(\.layoutDirection, .rightToLeft)
+    }
+}
+
+/// The sync screen: account, sync button and the data types to sync.
+private struct SyncPage: View {
+    @EnvironmentObject private var auth: GoogleAuthManager
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                HeaderCard()
+                if auth.isSignedIn {
+                    SyncCard()
+                    ForEach(SyncCategory.allCases) { category in
+                        CategoryCard(category: category)
+                    }
+                } else {
+                    ConnectCard()
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 24)
+        }
     }
 }
 
@@ -268,7 +292,7 @@ private struct SyncCard: View {
 
 // MARK: - Calorie balance
 
-private struct EnergyCard: View {
+struct EnergyCard: View {
     @EnvironmentObject private var sync: SyncCoordinator
     @AppStorage(AppSettings.deficitGoalKey) private var goal = 500
     @State private var editingEaten = false

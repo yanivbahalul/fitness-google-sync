@@ -75,8 +75,11 @@ final class HealthKitWriter {
     /// Returns how many samples were written.
     @discardableResult
     func replace(_ type: HKSampleType, since: Date, with samples: [HKSample]) async throws -> Int {
+        // Only samples the sync itself wrote (tagged with metadataKey) - never meals logged
+        // in the food diary or imported weights, which this app also writes.
         let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
             HKQuery.predicateForObjects(from: HKSource.default()),
+            HKQuery.predicateForObjects(withMetadataKey: Self.metadataKey),
             HKQuery.predicateForSamples(withStart: since, end: nil, options: .strictStartDate),
         ])
         try await deleteObjects(of: type, matching: predicate)

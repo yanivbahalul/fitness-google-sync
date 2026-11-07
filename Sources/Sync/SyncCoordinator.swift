@@ -285,7 +285,7 @@ final class SyncCoordinator: ObservableObject {
 
         var burned: Int?
         if let days = try? await healthClient.dailyRollUp(dataType: "total-calories", valueKey: "totalCalories",
-                                                          from: today, to: tomorrow),
+                                                          from: today, to: tomorrow, chunkDays: 14),
            let value = days.first(where: { calendar.isDate($0.day, inSameDayAs: today) })?.value {
             burned = Int(value.rounded())
         }
@@ -301,9 +301,36 @@ final class SyncCoordinator: ObservableObject {
     }
 
     /// Calories eaten today, typed in by hand (stored per day).
-    var manualEatenToday: Int? {
-        let key = Self.manualEatenKey(for: Date())
-        return UserDefaults.standard.object(forKey: key) as? Int
+    var manualEatenToday: Int? { manualEaten(on: Date()) }
+
+    func manualEaten(on day: Date) -> Int? {
+        UserDefaults.standard.object(forKey: Self.manualEatenKey(for: day)) as? Int
+    }
+
+    /// Total calories burned per day (resting + active) from Google Health, cached on the
+    /// device; recent days are always refreshed because today's value keeps growing.
+    func dailyBurned(days: Int) async -> [Date: Double] {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let start = calendar.date(byAdding: .day, value: -(days - 1), to: today)!
+        var cache: [Date: Double] = [:]
+        if let saved = UserDefaults.standard.dictionary(forKey: "burnedCache") as? [String: Double] {
+            for (k, v) in saved { if let t = Double(k) { cache[Date(timeIntervalSince1970: t)] = v } }
+        }
+        let refreshFrom = calendar.date(byAdding: .day, value: -2, to: today)!
+        let missing = (0..<days).map { calendar.date(byAdding: .day, value: $0, to: start)! }
+            .filter { $0 >= refreshFrom || cache[$0] == nil }
+        if let first = missing.min(), auth.isSignedIn {
+            let end = calendar.date(byAdding: .day, value: 1, to: today)!
+            if let fetched = try? await healthClient.dailyRollUp(dataType: "total-calories", valueKey: "totalCalories",
+                                                                 from: first, to: end, chunkDays: 14) {
+                for (day, value) in fetched where value > 0 { cache[day] = value }
+                var out: [String: Double] = [:]
+                for (k, v) in cache { out[String(k.timeIntervalSince1970)] = v }
+                UserDefaults.standard.set(out, forKey: "burnedCache")
+            }
+        }
+        return cache.filter { $0.key >= start }
     }
 
     /// Sets (or clears, with nil) today's hand-entered calories and updates the balance.

@@ -11,6 +11,9 @@ struct SettingsView: View {
     @AppStorage(AppSettings.notifyProblemsKey) private var notifyProblems = true
     @AppStorage(AppSettings.expiryReminderKey) private var expiryReminder = true
     @AppStorage(AppSettings.deficitGoalKey) private var deficitGoal = 500
+    @AppStorage(MealModel.settingsKey) private var mealModel = MealModel.opus.rawValue
+    @State private var apiKey = AnthropicKeyStore.key ?? ""
+    @State private var keySaved = AnthropicKeyStore.key != nil
 
     private let expiry = Notifier.signingExpiry
 
@@ -25,6 +28,30 @@ struct SettingsView: View {
                     }
                 } footer: {
                     Text("משווה לכל יום את הסך של Google Health מול מה ש‑HealthBridge כתב ומול מה ש‑Apple Health מציג.")
+                }
+
+                Section {
+                    SecureField("sk-ant-…", text: $apiKey)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Button(keySaved ? "עדכן מפתח" : "שמור מפתח") {
+                        let trimmed = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+                        AnthropicKeyStore.save(trimmed.isEmpty ? nil : trimmed)
+                        keySaved = !trimmed.isEmpty
+                    }
+                    if keySaved {
+                        Label("מפתח שמור במכשיר", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
+                    }
+                    Picker("מודל", selection: $mealModel) {
+                        ForEach(MealModel.allCases) { Text($0.title).tag($0.rawValue) }
+                    }
+                    Link(destination: URL(string: "https://console.anthropic.com/settings/keys")!) {
+                        Label("יצירת מפתח ב‑console.anthropic.com", systemImage: "key.fill")
+                    }
+                } header: {
+                    Text("ניתוח ארוחות (Claude)")
+                } footer: {
+                    Text("צילום או תיאור של ארוחה נשלח ל‑Claude לזיהוי. המפתח נשמר רק ב‑Keychain של האייפון. עלות משוערת לצילום: Opus כ‑6 אגורות, Sonnet כ‑3, Haiku פחות מאגורה. מומלץ להגדיר תקרת הוצאה בחשבון Anthropic.")
                 }
 
                 Section {
@@ -108,11 +135,13 @@ struct SettingsView: View {
                     Link(destination: URL(string: "https://yanivbahalul.github.io/fitness-google-sync/privacy.html")!) {
                         Label("מדיניות פרטיות", systemImage: "hand.raised.fill")
                     }
-                    Text("הנתונים עוברים ישירות מ‑Google Health אל Apple Health באייפון. אין שרת, ושום מידע לא נשמר או נשלח לשום מקום אחר.")
+                    Text("נתוני הבריאות עוברים ישירות מ‑Google Health אל Apple Health באייפון, בלי שרת. רק צילום או תיאור של ארוחה שאתה בוחר לנתח נשלח ל‑Claude (Anthropic), וברקוד נשלח ל‑Open Food Facts.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 } header: {
                     Text("פרטיות")
+                } footer: {
+                    Text("ערכי המזון: מאגר התזונה הלאומי הישראלי (צמרת), משרד הבריאות, data.gov.il. מוצרים ארוזים: Open Food Facts.")
                 }
             }
             .navigationTitle("הגדרות")
