@@ -25,22 +25,42 @@ final class GoogleHealthClient {
     }
 
     /// Lists raw data points of `dataType` newer than `since`, returning the inner value
-    /// object stored under `pointKey` (e.g. "heartRate") of each data point.
-    ///
-    /// No server-side filter is sent: results come back newest-first, so paging stops as
-    /// soon as a page reaches data older than `since`. That avoids depending on the
-    /// per-type filter field syntax.
+    /// object stored under `pointKey` (e.g. "weight") of each data point.
     func listPoints(
         dataType: String,
         pointKey: String,
         since: Date,
-        timeOf: ([String: Any]) -> Date?,
+        timeOf: @escaping ([String: Any]) -> Date?,
         method: ListMethod = .list,
         pageSize: Int = 10000,
         includeDataSourceFamily: Bool = true,
         maxPages: Int = 60
     ) async throws -> [[String: Any]] {
         var results: [[String: Any]] = []
+        try await forEachPoint(dataType: dataType, pointKey: pointKey, since: since, timeOf: timeOf,
+                               method: method, pageSize: pageSize,
+                               includeDataSourceFamily: includeDataSourceFamily, maxPages: maxPages) {
+            results.append($0)
+        }
+        return results
+    }
+
+    /// Streams data points newer than `since` to `handle`, page by page, so large data sets
+    /// (e.g. second-by-second heart rate) never have to sit in memory at once.
+    ///
+    /// No server-side filter is sent: results come back newest-first, so paging stops as
+    /// soon as a page reaches data older than `since`.
+    func forEachPoint(
+        dataType: String,
+        pointKey: String,
+        since: Date,
+        timeOf: @escaping ([String: Any]) -> Date?,
+        method: ListMethod = .list,
+        pageSize: Int = 10000,
+        includeDataSourceFamily: Bool = true,
+        maxPages: Int = 60,
+        handle: ([String: Any]) -> Void
+    ) async throws {
         var pageToken: String?
 
         for _ in 0..<maxPages {
@@ -65,13 +85,48 @@ final class GoogleHealthClient {
                     reachedOlderData = true
                     continue
                 }
-                results.append(value)
+                handle(value)
             }
 
             guard !reachedOlderData,
                   let next = json["nextPageToken"] as? String, !next.isEmpty
             else { break }
             pageToken = next
+        }
+    }
+
+    /// Server-side aggregation over physical time (`dataPoints:rollUp`): one value per
+    /// `windowSeconds` window. Requests at most 7 days at a time (the API caps some
+    /// types, e.g. heart rate, at 14 days per request).
+    func rollUp(dataType: String, valueKey: String, from start: Date, to end: Date,
+                windowSeconds: Int) async throws -> [(start: Date, value: Double)] {
+        var results: [(start: Date, value: Double)] = []
+        var chunkStart = start
+        while chunkStart < end {
+            let chunkEnd = min(end, chunkStart.addingTimeInterval(7 * 86400))
+            var pageToken: String?
+            repeat {
+                var request = URLRequest(url: URL(string: base + dataType + "/dataPoints:rollUp")!)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                var body: [String: Any] = [
+                    "range": ["startTime": GoogleHealthJSON.rfc3339(chunkStart), "endTime": GoogleHealthJSON.rfc3339(chunkEnd)],
+                    "windowSize": "\(windowSeconds)s",
+                    "dataSourceFamily": dataSourceFamily,
+                ]
+                if let pageToken { body["pageToken"] = pageToken }
+                request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+                let json = try await send(request)
+                for point in (json["rollupDataPoints"] as? [[String: Any]]) ?? [] {
+                    guard let time = GoogleHealthJSON.timestamp(point["startTime"]),
+                          let value = GoogleHealthJSON.averageNumber(in: point[valueKey])
+                    else { continue }
+                    results.append((time, value))
+                }
+                pageToken = (json["nextPageToken"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            } while pageToken != nil
+            chunkStart = chunkEnd
         }
         return results
     }
@@ -165,6 +220,23 @@ enum GoogleHealthJSON {
             if let n = number(dict[key]) { return n }
         }
         return nil
+    }
+
+    /// Average from a rollup value object (prefers fields named avg/average/mean).
+    static func averageNumber(in any: Any?) -> Double? {
+        if let dict = any as? [String: Any] {
+            for key in dict.keys.sorted() {
+                let k = key.lowercased()
+                if k.contains("avg") || k.contains("average") || k.contains("mean"), let n = number(dict[key]) {
+                    return n
+                }
+            }
+        }
+        return firstNumber(in: any)
+    }
+
+    static func rfc3339(_ date: Date) -> String {
+        iso.string(from: date)
     }
 
     static func timestamp(_ any: Any?) -> Date? {

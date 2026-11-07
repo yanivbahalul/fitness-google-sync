@@ -157,25 +157,40 @@ enum SyncCatalog {
         }
     }
 
-    /// Heart rate samples averaged into 5-minute buckets (raw data can be every few seconds).
+    /// Heart rate as 5-minute averages. Raw heart rate can be a sample every few seconds
+    /// (hundreds of thousands of points for two weeks), so Google aggregates it server-side
+    /// with rollUp; if that call isn't available, raw points are streamed and averaged
+    /// page by page instead.
     private static var heartRate: SyncItem {
         let type = HKQuantityType(.heartRate)
         let bpm = HKUnit.count().unitDivided(by: .minute())
-        return SyncItem(name: "דופק", hkType: type) { client, since, _ in
-            let points = try await client.listPoints(
-                dataType: "heart-rate", pointKey: "heartRate", since: since,
-                timeOf: GoogleHealthJSON.sampleTime, maxPages: 200)
-            var buckets: [Date: (sum: Double, count: Double)] = [:]
-            for point in points {
-                guard let time = GoogleHealthJSON.sampleTime(point),
-                      let v = GoogleHealthJSON.number(point["beatsPerMinute"]), v > 0 else { continue }
-                let bucket = Date(timeIntervalSince1970: (time.timeIntervalSince1970 / 300).rounded(.down) * 300)
-                let current = buckets[bucket] ?? (0, 0)
-                buckets[bucket] = (current.sum + v, current.count + 1)
+        let window: TimeInterval = 300
+        return SyncItem(name: "דופק", hkType: type) { client, since, now in
+            var averages: [(start: Date, value: Double)] = []
+            do {
+                averages = try await client.rollUp(dataType: "heart-rate", valueKey: "heartRate",
+                                                   from: since, to: now, windowSeconds: Int(window))
+            } catch let error as GoogleHealthError where error.isPermissionDenied {
+                throw error
+            } catch {
+                averages = []
             }
-            return buckets.map { time, agg in
-                HKQuantitySample(type: type, quantity: HKQuantity(unit: bpm, doubleValue: (agg.sum / agg.count).rounded()),
-                                 start: time, end: time, metadata: meta)
+            if averages.isEmpty {
+                var buckets: [Date: (sum: Double, count: Double)] = [:]
+                try await client.forEachPoint(dataType: "heart-rate", pointKey: "heartRate", since: since,
+                                              timeOf: GoogleHealthJSON.sampleTime, maxPages: 100) { point in
+                    guard let time = GoogleHealthJSON.sampleTime(point),
+                          let v = GoogleHealthJSON.number(point["beatsPerMinute"]), v > 0 else { return }
+                    let bucket = Date(timeIntervalSince1970: (time.timeIntervalSince1970 / window).rounded(.down) * window)
+                    let current = buckets[bucket] ?? (0, 0)
+                    buckets[bucket] = (current.sum + v, current.count + 1)
+                }
+                averages = buckets.map { ($0.key, $0.value.sum / $0.value.count) }
+            }
+            return averages.compactMap { start, value in
+                guard value > 0 else { return nil }
+                return HKQuantitySample(type: type, quantity: HKQuantity(unit: bpm, doubleValue: value.rounded()),
+                                        start: start, end: start, metadata: meta)
             }
         }
     }
