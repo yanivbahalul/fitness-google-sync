@@ -27,7 +27,7 @@ struct AddEatenIntent: AppIntent {
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let food = FoodLog.shared
         await food.addQuick(kcal: Double(max(0, calories)))
-        let eaten = Int(food.total(on: Date()))
+        let eaten = Int(safe: food.total(on: Date()))
         var text = "נוסף. נאכלו היום \(eaten) קלוריות."
         if let burned = await AppState.sync.burned(on: Date()) {
             let deficit = burned - eaten

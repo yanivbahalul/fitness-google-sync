@@ -82,7 +82,8 @@ final class ProgressModel: ObservableObject {
     func weeksToGoal(_ goal: Double) -> Double? {
         guard let current = currentWeight, let rate = weeklyRate, rate != 0 else { return nil }
         let weeks = (goal - current) / rate
-        return weeks > 0 ? weeks : nil
+        // A near-zero rate gives an absurd (or infinite) answer; only show realistic ones.
+        return weeks.isFinite && weeks > 0 && weeks < 520 ? weeks : nil
     }
 
     func refresh(sync: SyncCoordinator, food: FoodLog) async {

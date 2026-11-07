@@ -27,7 +27,7 @@ struct DraftReviewView: View {
                 HStack {
                     Text("סה\"כ").font(.headline)
                     Spacer()
-                    Text("\(Int(total).formatted()) קק\"ל").font(.headline).monospacedDigit()
+                    Text("\(Int(safe: total).formatted()) קק\"ל").font(.headline).monospacedDigit()
                 }
                 Button {
                     saving = true
@@ -64,7 +64,7 @@ private struct DraftRow: View {
                     Text(draft.label).font(.body.weight(.semibold))
                     Menu {
                         ForEach(FoodDatabase.shared.search(draft.label, limit: 12)) { item in
-                            Button("\(item.name) · \(Int(item.kcal)) ל‑100 ג׳") { draft.food = item }
+                            Button("\(item.name) · \(Int(safe: item.kcal)) ל‑100 ג׳") { draft.food = item }
                         }
                         Button("בלי התאמה (הערכה)") { draft.food = nil }
                     } label: {
@@ -79,7 +79,7 @@ private struct DraftRow: View {
                     .accessibilityLabel("התאמה במאגר: \(draft.food?.name ?? "ללא")")
                 }
                 Spacer()
-                Text("\(Int(draft.kcal))")
+                Text("\(Int(safe: draft.kcal))")
                     .font(.headline)
                     .monospacedDigit()
             }
@@ -98,9 +98,9 @@ private struct DraftRow: View {
                 if let portions = draft.food?.portions, !portions.isEmpty {
                     Menu {
                         ForEach(portions, id: \.self) { p in
-                            Button("\(p.name) (\(Int(p.grams)) ג׳)") {
+                            Button("\(p.name) (\(Int(safe: p.grams)) ג׳)") {
                                 draft.grams = p.grams
-                                gramsText = String(Int(p.grams))
+                                gramsText = String(Int(safe: p.grams))
                             }
                         }
                     } label: {
@@ -112,7 +112,7 @@ private struct DraftRow: View {
         }
         .padding(.vertical, 4)
         .opacity(draft.include ? 1 : 0.5)
-        .onAppear { gramsText = String(Int(draft.grams)) }
+        .onAppear { gramsText = String(Int(safe: draft.grams)) }
     }
 }
 
@@ -339,7 +339,7 @@ struct FoodSearchView: View {
                         } label: {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(item.name).foregroundStyle(.primary)
-                                Text("\(Int(item.kcal)) קק\"ל ל‑100 ג׳ · חלבון \(String(format: "%.1f", item.protein)) ג׳")
+                                Text("\(Int(safe: item.kcal)) קק\"ל ל‑100 ג׳ · חלבון \(String(format: "%.1f", item.protein)) ג׳")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }

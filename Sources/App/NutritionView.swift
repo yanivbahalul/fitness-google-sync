@@ -187,7 +187,7 @@ private struct DiaryCard: View {
                 Label(isToday ? "יומן היום" : "יומן", systemImage: "list.bullet.rectangle.fill")
                     .font(.headline)
                 Spacer()
-                Text("\(Int(entries.map(\.kcal).reduce(0, +)).formatted()) קק\"ל")
+                Text("\(Int(safe: entries.map(\.kcal).reduce(0, +)).formatted()) קק\"ל")
                     .font(.subheadline.weight(.semibold))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
@@ -206,12 +206,12 @@ private struct DiaryCard: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(entry.name).font(.subheadline).lineLimit(2)
                             Text([entry.date.formatted(date: .omitted, time: .shortened),
-                                  entry.grams.map { "\(Int($0)) ג׳" }].compactMap { $0 }.joined(separator: " · "))
+                                  entry.grams.map { "\(Int(safe: $0)) ג׳" }].compactMap { $0 }.joined(separator: " · "))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Text("\(Int(entry.kcal))")
+                        Text("\(Int(safe: entry.kcal))")
                             .font(.subheadline.weight(.semibold))
                             .monospacedDigit()
                         Menu {
@@ -370,7 +370,7 @@ private struct WeightCard: View {
                     AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
                         AxisGridLine().foregroundStyle(Color.secondary.opacity(0.15))
                         AxisValueLabel {
-                            if let v = value.as(Double.self) { Text("\(Int(v))").font(.caption) }
+                            if let v = value.as(Double.self) { Text("\(Int(safe: v))").font(.caption) }
                         }
                     }
                 }
@@ -409,7 +409,7 @@ private struct WeightCard: View {
             }
             if goalWeight > 0, let current = progress.currentWeight {
                 if let weeks = progress.weeksToGoal(goalWeight) {
-                    let date = Calendar.current.date(byAdding: .day, value: Int(weeks * 7), to: Date()) ?? Date()
+                    let date = Calendar.current.date(byAdding: .day, value: Int(safe: weeks * 7), to: Date()) ?? Date()
                     Text("נשארו \(kg(current - goalWeight)). בקצב הנוכחי תגיע ליעד בערך ב‑\(date.formatted(.dateTime.month(.wide).year())).")
                         .font(.subheadline)
                 } else if current > goalWeight {
@@ -496,8 +496,8 @@ private struct BalanceCard: View {
             } else {
                 Headline(text: "ב‑\(good) מתוך \(days.count) ימים אכלת פחות ממה ששרפת",
                          detail: progress.averageDeficit.map { avg in
-                             avg >= 0 ? "בממוצע אכלת \(Int(avg).formatted()) קלוריות פחות ממה ששרפת ביום."
-                                      : "בממוצע אכלת \(Int(-avg).formatted()) קלוריות יותר ממה ששרפת ביום."
+                             avg >= 0 ? "בממוצע אכלת \(Int(safe: avg).formatted()) קלוריות פחות ממה ששרפת ביום."
+                                      : "בממוצע אכלת \(Int(safe: -avg).formatted()) קלוריות יותר ממה ששרפת ביום."
                          })
                 Chart {
                     ForEach(days) { b in
@@ -511,7 +511,7 @@ private struct BalanceCard: View {
                             .foregroundStyle(Color.secondary.opacity(0.3))
                             .annotation(position: .top) {
                                 Tooltip(title: shortDate(selected.day),
-                                        value: "שרפת \(Int(selected.burned)) · אכלת \(Int(selected.eaten))")
+                                        value: "שרפת \(Int(safe: selected.burned)) · אכלת \(Int(safe: selected.eaten))")
                             }
                     }
                 }
@@ -519,7 +519,7 @@ private struct BalanceCard: View {
                     AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
                         AxisGridLine().foregroundStyle(Color.secondary.opacity(0.15))
                         AxisValueLabel {
-                            if let v = value.as(Double.self) { Text("\(Int(v))").font(.caption) }
+                            if let v = value.as(Double.self) { Text("\(Int(safe: v))").font(.caption) }
                         }
                     }
                 }
@@ -612,11 +612,11 @@ private struct MacrosCard: View {
                 Label("מה אכלתי בשבוע האחרון", systemImage: "fork.knife")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
-                Headline(text: "בממוצע \(Int(m.kcal).formatted()) קלוריות ביום")
+                Headline(text: "בממוצע \(Int(safe: m.kcal).formatted()) קלוריות ביום")
                 HStack(spacing: 8) {
-                    StatTile(title: "חלבון ביום", value: "\(Int(m.protein)) ג׳")
-                    StatTile(title: "פחמימות ביום", value: "\(Int(m.carbs)) ג׳")
-                    StatTile(title: "שומן ביום", value: "\(Int(m.fat)) ג׳")
+                    StatTile(title: "חלבון ביום", value: "\(Int(safe: m.protein)) ג׳")
+                    StatTile(title: "פחמימות ביום", value: "\(Int(safe: m.carbs)) ג׳")
+                    StatTile(title: "שומן ביום", value: "\(Int(safe: m.fat)) ג׳")
                 }
             }
         }

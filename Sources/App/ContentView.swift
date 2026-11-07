@@ -225,7 +225,7 @@ private struct SyncCard: View {
                         ProgressView(value: sync.progress)
                             .tint(.white)
                             .padding(.horizontal, 24)
-                        Text("מסנכרן… \(Int(sync.progress * 100))%")
+                        Text("מסנכרן… \(Int(safe: sync.progress * 100))%")
                             .font(.headline)
                     } else {
                         Label("סנכרן עכשיו", systemImage: "arrow.triangle.2.circlepath")
@@ -242,7 +242,7 @@ private struct SyncCard: View {
             }
             .buttonStyle(.plain)
             .disabled(sync.isSyncing || sync.enabledCount == 0)
-            .accessibilityLabel(sync.isSyncing ? "מסנכרן, \(Int(sync.progress * 100)) אחוז" : "סנכרן עכשיו, \(sync.enabledCount) סוגי נתונים")
+            .accessibilityLabel(sync.isSyncing ? "מסנכרן, \(Int(safe: sync.progress * 100)) אחוז" : "סנכרן עכשיו, \(sync.enabledCount) סוגי נתונים")
 
             HStack {
                 if let date = sync.lastSyncDate {
@@ -304,7 +304,7 @@ struct EnergyCard: View {
     private var isToday: Bool { Calendar.current.isDateInToday(day) }
 
     var body: some View {
-        let eaten = Int(food.total(on: day).rounded()) + otherApps
+        let eaten = Int(safe: food.total(on: day).rounded()) + otherApps
         Card {
             HStack {
                 Label(isToday ? "מאזן קלורי היום" : "מאזן קלורי", systemImage: "chart.bar.xaxis")
@@ -347,7 +347,7 @@ struct EnergyCard: View {
         }
         .task(id: day) {
             loadingBurned = true
-            otherApps = Int((await food.otherAppsDailyKcal(from: day, days: 1)).values.reduce(0, +).rounded())
+            otherApps = Int(safe: (await food.otherAppsDailyKcal(from: day, days: 1)).values.reduce(0, +).rounded())
             burned = await sync.burned(on: day)
             loadingBurned = false
         }

@@ -99,3 +99,11 @@ final class FoodDatabase {
         return String(cleaned).split(separator: " ").joined(separator: " ")
     }
 }
+
+extension Int {
+    /// Converts without crashing: NaN → 0, infinities and huge values are clamped.
+    init(safe value: Double) {
+        if value.isNaN { self = 0; return }
+        self = Int(Swift.max(Swift.min(value, 1e15), -1e15))
+    }
+}

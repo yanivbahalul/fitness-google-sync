@@ -267,7 +267,7 @@ final class SyncCoordinator: ObservableObject {
         let today = calendar.startOfDay(for: Date())
         let days = (calendar.dateComponents([.day], from: start, to: today).day ?? 0) + 1
         guard days >= 1 else { return nil }
-        return await dailyBurned(days: days)[start].map { Int($0.rounded()) }
+        return await dailyBurned(days: days)[start].map { Int(safe: $0.rounded()) }
     }
 
     /// Total calories burned per day (resting + active) from Google Health, cached on the
@@ -287,7 +287,8 @@ final class SyncCoordinator: ObservableObject {
             let end = calendar.date(byAdding: .day, value: 1, to: today)!
             if let fetched = try? await healthClient.dailyRollUp(dataType: "total-calories", valueKey: "totalCalories",
                                                                  from: first, to: end, chunkDays: 14) {
-                for (day, value) in fetched where value > 0 { cache[day] = value }
+                // Ignore impossible values (e.g. an unexpected unit) rather than show nonsense.
+                for (day, value) in fetched where value > 0 && value < 20000 { cache[day] = value }
                 var out: [String: Double] = [:]
                 for (k, v) in cache { out[String(k.timeIntervalSince1970)] = v }
                 UserDefaults.standard.set(out, forKey: "burnedCache")
@@ -322,13 +323,13 @@ final class SyncCoordinator: ObservableObject {
 
         switch item.hkType.identifier {
         case HKQuantityTypeIdentifier.stepCount.rawValue:
-            summary.steps = Int(todays.reduce(0) { $0 + $1.quantity.doubleValue(for: .count()) })
+            summary.steps = Int(safe: todays.reduce(0) { $0 + $1.quantity.doubleValue(for: .count()) })
         case HKQuantityTypeIdentifier.activeEnergyBurned.rawValue:
-            summary.activeKcal = Int(todays.reduce(0) { $0 + $1.quantity.doubleValue(for: .kilocalorie()) })
+            summary.activeKcal = Int(safe: todays.reduce(0) { $0 + $1.quantity.doubleValue(for: .kilocalorie()) })
         case HKQuantityTypeIdentifier.restingHeartRate.rawValue:
             let bpm = HKUnit.count().unitDivided(by: .minute())
             let all = samples.compactMap { $0 as? HKQuantitySample }.sorted { $0.startDate > $1.startDate }
-            if let latest = all.first { summary.restingHeartRate = Int(latest.quantity.doubleValue(for: bpm)) }
+            if let latest = all.first { summary.restingHeartRate = Int(safe: latest.quantity.doubleValue(for: bpm)) }
         case HKCategoryTypeIdentifier.sleepAnalysis.rawValue:
             // Last night: asleep stages that ended after yesterday 18:00.
             let cutoff = calendar.date(byAdding: .hour, value: -6, to: startOfToday)!
@@ -341,7 +342,7 @@ final class SyncCoordinator: ObservableObject {
             let seconds = samples.compactMap { $0 as? HKCategorySample }
                 .filter { asleep.contains($0.value) && $0.endDate > cutoff }
                 .reduce(0.0) { $0 + $1.endDate.timeIntervalSince($1.startDate) }
-            if seconds > 0 { summary.sleepMinutes = Int(seconds / 60) }
+            if seconds > 0 { summary.sleepMinutes = Int(safe: seconds / 60) }
         default:
             break
         }
@@ -375,9 +376,9 @@ final class SyncCoordinator: ObservableObject {
         return (0..<days).reversed().map { offset in
             let day = calendar.date(byAdding: .day, value: offset, to: start)!
             return StepsDay(day: day,
-                            google: Int((googleByDay[day] ?? 0).rounded()),
-                            stepsBridge: Int((mine[day] ?? 0).rounded()),
-                            appleHealth: Int((merged[day] ?? 0).rounded()))
+                            google: Int(safe: (googleByDay[day] ?? 0).rounded()),
+                            stepsBridge: Int(safe: (mine[day] ?? 0).rounded()),
+                            appleHealth: Int(safe: (merged[day] ?? 0).rounded()))
         }
     }
 }
