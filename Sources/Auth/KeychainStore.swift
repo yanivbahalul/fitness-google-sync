@@ -3,7 +3,7 @@ import Security
 
 /// Minimal Keychain wrapper for storing the Google OAuth refresh token.
 enum KeychainStore {
-    private static let service = "com.yanivbahalul.stepsbridge.google"
+    private static let service = "com.yanivbahalul.healthbridge.google"
     private static let account = "refreshToken"
 
     static func saveRefreshToken(_ token: String) {

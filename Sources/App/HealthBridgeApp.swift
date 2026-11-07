@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct StepsBridgeApp: App {
+struct HealthBridgeApp: App {
     @StateObject private var auth = GoogleAuthManager()
     @StateObject private var sync: SyncCoordinator
 

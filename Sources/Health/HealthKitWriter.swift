@@ -6,7 +6,7 @@ import HealthKit
 final class HealthKitWriter {
     private let store = HKHealthStore()
     private let stepType = HKQuantityType.quantityType(forIdentifier: .stepCount)!
-    private let sourceTag = "StepsBridge.googleHealthDailyTotal"
+    private let sourceTag = "HealthBridge.googleHealthDailyTotal"
 
     func requestAuthorization() async throws {
         guard HKHealthStore.isHealthDataAvailable() else {

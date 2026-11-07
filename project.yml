@@ -1,4 +1,4 @@
-name: StepsBridge
+name: HealthBridge
 options:
   bundleIdPrefix: com.yanivbahalul
   deploymentTarget:
@@ -9,7 +9,7 @@ settings:
     SWIFT_VERSION: "5.0"
 
 targets:
-  StepsBridge:
+  HealthBridge:
     type: application
     platform: iOS
     sources:
@@ -22,20 +22,20 @@ targets:
     info:
       path: Sources/App/Info.plist
       properties:
-        CFBundleDisplayName: StepsBridge
+        CFBundleDisplayName: HealthBridge
         CFBundleShortVersionString: "1.0"
         CFBundleVersionString: "1"
         UILaunchScreen: {}
-        NSHealthShareUsageDescription: "StepsBridge reads your existing step data so it won't create duplicate entries when writing synced steps."
-        NSHealthUpdateUsageDescription: "StepsBridge writes step counts pulled from your Google Health account into Health."
+        NSHealthShareUsageDescription: "HealthBridge reads your existing step data so it won't create duplicate entries when writing synced steps."
+        NSHealthUpdateUsageDescription: "HealthBridge writes step counts pulled from your Google Health account into Health."
         CFBundleURLTypes:
           - CFBundleURLSchemes:
               - $(GOOGLE_OAUTH_REDIRECT_SCHEME)
     entitlements:
-      path: Sources/App/StepsBridge.entitlements
+      path: Sources/App/HealthBridge.entitlements
       properties:
         com.apple.developer.healthkit: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.yanivbahalul.stepsbridge
-        GOOGLE_OAUTH_REDIRECT_SCHEME: com.yanivbahalul.stepsbridge
+        PRODUCT_BUNDLE_IDENTIFIER: com.yanivbahalul.healthbridge
+        GOOGLE_OAUTH_REDIRECT_SCHEME: com.yanivbahalul.healthbridge

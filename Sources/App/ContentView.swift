@@ -59,7 +59,7 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle("StepsBridge")
+            .navigationTitle("HealthBridge")
         }
     }
 }

@@ -1,4 +1,4 @@
-# StepsBridge 👟➡️🍎
+# HealthBridge 👟➡️🍎
 
 **Sync your daily step count from Google Health to Apple Health — automatically, privately, on your own phone.**
 
@@ -10,12 +10,19 @@
 </p>
 
 Google shut off the old **Fitbit Web API** on Nov 2, 2026, which broke the "Fitness Data Sync"
-app this project replaces. StepsBridge talks to Google's new **Google Health API** instead,
+app this project replaces. HealthBridge talks to Google's new **Google Health API** instead,
 and writes the results straight into Apple Health with a single tap.
 
 > **Heads up:** this repository contains source code only. It was written in a Linux cloud
 > container with no Xcode, so it has never been compiled or run. You need a Mac with Xcode
 > to build it — see [Build it](#4-build-it-on-a-mac).
+
+<p align="center">
+  <img src="docs/assets/sync-screen.png" alt="HealthBridge sync screen" width="320">
+  <br>
+  <sub>The current codebase syncs <b>daily steps only</b> — the "17 data types" label in this
+  screenshot reflects a planned future version, not what's implemented here yet.</sub>
+</p>
 
 ---
 
@@ -78,7 +85,7 @@ flowchart LR
 <summary><b>Click to expand the Google Cloud Console steps</b></summary>
 
 1. Go to the [Google Cloud Console](https://console.cloud.google.com/) and create a new
-   project (e.g. "StepsBridge").
+   project (e.g. "HealthBridge").
 2. Enable the **Google Health API** for that project:
    [APIs & Services → Library](https://console.cloud.google.com/apis/library) → search
    "Google Health API" → **Enable**.
@@ -93,7 +100,7 @@ flowchart LR
    OAuth client ID):
    - Google's Health API setup guide says to choose **Web application** (it issues a
      client secret, needed for the refresh-token flow this app uses).
-   - Authorized redirect URI: `com.yanivbahalul.stepsbridge:/oauth2redirect`
+   - Authorized redirect URI: `com.yanivbahalul.healthbridge:/oauth2redirect`
    - If the Cloud Console rejects a non-`https` redirect URI for a Web application client,
      switch the client type to **iOS** or **Desktop app** instead — those accept custom
      URL schemes. The app's code doesn't change either way; only this console step does.
@@ -104,7 +111,7 @@ flowchart LR
 ### 2. Link your Google Health profile
 
 Install the **Google Health** app (App Store / Play Store) on your phone and sign in with
-the same Google account *before* connecting from StepsBridge. The OAuth consent screen
+the same Google account *before* connecting from HealthBridge. The OAuth consent screen
 can't detect this for you, so skipping it is a common cause of an empty first sync.
 
 ### 3. Configure the app
@@ -119,7 +126,7 @@ Edit `Sources/Config/Secrets.plist`:
 |---|---|
 | `GoogleOAuthClientID` | the Client ID from step 1 |
 | `GoogleOAuthClientSecret` | the Client secret from step 1 |
-| `GoogleOAuthRedirectURI` | leave as `com.yanivbahalul.stepsbridge:/oauth2redirect` unless you changed the bundle ID in `project.yml`, in which case match it there too |
+| `GoogleOAuthRedirectURI` | leave as `com.yanivbahalul.healthbridge:/oauth2redirect` unless you changed the bundle ID in `project.yml`, in which case match it there too |
 
 `Secrets.plist` is gitignored — it's never committed.
 
@@ -129,7 +136,7 @@ Requires Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew inst
 
 ```bash
 xcodegen generate
-open StepsBridge.xcodeproj
+open HealthBridge.xcodeproj
 ```
 
 In Xcode:
@@ -145,7 +152,7 @@ In Xcode:
 
 ```
 Sources/
-├── App/            StepsBridgeApp.swift, ContentView.swift — entry point & UI
+├── App/            HealthBridgeApp.swift, ContentView.swift — entry point & UI
 ├── Auth/           GoogleAuthManager.swift — OAuth 2.0 + PKCE, token refresh
 │                   KeychainStore.swift — refresh token storage
 ├── Health/         GoogleHealthClient.swift — Google Health API calls
