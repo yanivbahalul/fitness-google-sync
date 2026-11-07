@@ -1,19 +1,13 @@
 import Foundation
+import HealthKit
 
 @MainActor
 final class SyncCoordinator: ObservableObject {
-    struct ItemResult: Identifiable {
-        let id = UUID()
-        let name: String
-        let count: Int?
-        let error: String?
-    }
-
     @Published var isSyncing = false
-    @Published var progress: String?
+    /// When the last sync finished (shown as "sync completed at ...").
     @Published var lastSyncDate: Date?
-    @Published var syncedFrom: Date?
-    @Published var results: [ItemResult] = []
+    /// Names of data types that failed in the last sync (empty when everything worked).
+    @Published var failedTypes: [String] = []
     @Published var lastError: String?
     @Published var needsReconnect = false
 
@@ -21,8 +15,8 @@ final class SyncCoordinator: ObservableObject {
     private let healthClient: GoogleHealthClient
     private let healthKitWriter = HealthKitWriter()
 
-    /// The first sync (and "Full resync") backfills this many days.
-    private let fullWindowDays = 14
+    /// The first sync (or one after a long break) backfills at most this many days.
+    private let maxWindowDays = 14
     private static let lastSyncKey = "lastSuccessfulSync"
 
     init(auth: GoogleAuthManager) {
@@ -31,62 +25,79 @@ final class SyncCoordinator: ObservableObject {
         self.lastSyncDate = UserDefaults.standard.object(forKey: Self.lastSyncKey) as? Date
     }
 
-    /// Start of the window to (re)sync.
-    ///
-    /// Normally from the start of the day *before* the last successful sync: that covers
-    /// last night's sleep (which starts before midnight) and daily values Google finalizes
-    /// late, such as resting heart rate. Never more than `fullWindowDays` back.
-    private func windowStart(now: Date, full: Bool) -> Date {
+    /// Start of the window to sync: the start of the day *before* the last sync, which
+    /// covers last night's sleep (it starts before midnight) and daily values Google
+    /// finalizes late. Synced daily, that's yesterday + today. Never more than 14 days.
+    private func windowStart(now: Date) -> Date {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: now)
-        let earliest = calendar.date(byAdding: .day, value: -fullWindowDays, to: today)!
-        guard !full, let last = lastSyncDate else { return earliest }
+        let earliest = calendar.date(byAdding: .day, value: -maxWindowDays, to: today)!
+        guard let last = lastSyncDate else { return earliest }
         let fromLast = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: last))!
         return max(earliest, min(fromLast, today))
     }
 
-    func syncNow(full: Bool = false) async {
+    func syncNow() async {
         guard auth.isSignedIn else {
-            lastError = "Connect your Google account first."
+            lastError = "יש להתחבר קודם ל‑Google."
             return
         }
         isSyncing = true
         lastError = nil
         needsReconnect = false
-        results = []
-        defer { isSyncing = false; progress = nil }
+        defer { isSyncing = false }
 
         let items = SyncCatalog.all
         do {
             try await healthKitWriter.requestAuthorization(toShare: SyncCatalog.shareTypes)
+            // Refresh the access token once up front so the parallel requests share it.
+            _ = try await auth.validAccessToken()
         } catch {
             lastError = error.localizedDescription
             return
         }
 
         let now = Date()
-        let since = windowStart(now: now, full: full)
-        syncedFrom = since
+        let since = windowStart(now: now)
+        let client = healthClient
 
-        for item in items {
-            progress = "Syncing \(item.name)…"
-            do {
-                let samples = try await item.fetch(healthClient, since, now)
-                let written = try await healthKitWriter.replace(item.hkType, since: since, with: samples)
-                results.append(ItemResult(name: item.name, count: written, error: nil))
-            } catch let error as GoogleHealthError where error.isPermissionDenied {
-                needsReconnect = true
-                results.append(ItemResult(name: item.name, count: nil, error: "No permission"))
-            } catch {
-                results.append(ItemResult(name: item.name, count: nil, error: error.localizedDescription))
+        // Fetch every data type from Google in parallel.
+        var fetched: [Int: Result<[HKSample], Error>] = [:]
+        await withTaskGroup(of: (Int, Result<[HKSample], Error>).self) { group in
+            for (index, item) in items.enumerated() {
+                group.addTask {
+                    do {
+                        return (index, .success(try await item.fetch(client, since, now)))
+                    } catch {
+                        return (index, .failure(error))
+                    }
+                }
+            }
+            for await (index, result) in group {
+                fetched[index] = result
             }
         }
-        // Advance the window when the sync worked. (A type that keeps failing, e.g. one Google
-        // doesn't provide for your band, shouldn't force a 14-day pull on every tap;
-        // "Full resync" is there to backfill after fixing a problem.)
-        if results.contains(where: { $0.error == nil }) {
+
+        // Write to Apple Health.
+        var failed: [String] = []
+        for (index, item) in items.enumerated() {
+            do {
+                let samples = try fetched[index]!.get()
+                try await healthKitWriter.replace(item.hkType, since: since, with: samples)
+            } catch {
+                if let error = error as? GoogleHealthError, error.isPermissionDenied {
+                    needsReconnect = true
+                }
+                failed.append(item.name)
+            }
+        }
+        failedTypes = failed
+
+        if failed.count < items.count {
             lastSyncDate = now
             UserDefaults.standard.set(now, forKey: Self.lastSyncKey)
+        } else {
+            lastError = "הסנכרון נכשל. בדוק חיבור לאינטרנט, או התנתק והתחבר מחדש ל‑Google."
         }
     }
 }

@@ -18,43 +18,43 @@ enum SyncCatalog {
     static var all: [SyncItem] {
         [
             // MARK: activity_and_fitness
-            intervalSum(name: "Steps", dataType: "steps", key: "steps", field: "count",
+            intervalSum(name: "צעדים", dataType: "steps", key: "steps", field: "count",
                         hk: .stepCount, unit: .count()),
-            intervalSum(name: "Distance", dataType: "distance", key: "distance", field: "millimeters",
+            intervalSum(name: "מרחק", dataType: "distance", key: "distance", field: "millimeters",
                         hk: .distanceWalkingRunning, unit: .meter(), scale: 0.001),
-            intervalSum(name: "Active energy", dataType: "active-energy-burned", key: "activeEnergyBurned", field: "kcal",
+            intervalSum(name: "קלוריות פעילות", dataType: "active-energy-burned", key: "activeEnergyBurned", field: "kcal",
                         hk: .activeEnergyBurned, unit: .kilocalorie()),
-            dailyRollUp(name: "Floors", dataType: "floors", valueKey: "floors",
+            dailyRollUp(name: "קומות", dataType: "floors", valueKey: "floors",
                         hk: .flightsClimbed, unit: .count()),
-            samples(name: "VO2 max", dataType: "vo2-max", key: "vo2Max", field: "vo2Max",
+            samples(name: "VO2 Max", dataType: "vo2-max", key: "vo2Max", field: "vo2Max",
                     hk: .vo2Max, unit: HKUnit(from: "ml/kg*min")),
             workouts,
 
             // MARK: health_metrics_and_measurements
             heartRate,
-            daily(name: "Resting heart rate", dataType: "daily-resting-heart-rate", key: "dailyRestingHeartRate",
+            daily(name: "דופק במנוחה", dataType: "daily-resting-heart-rate", key: "dailyRestingHeartRate",
                   field: "beatsPerMinute", hk: .restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute())),
             // Apple Health stores HRV as SDNN; only write it when Google provides the SDNN value.
-            samples(name: "HRV (SDNN)", dataType: "heart-rate-variability", key: "heartRateVariability",
+            samples(name: "HRV", dataType: "heart-rate-variability", key: "heartRateVariability",
                     field: "standardDeviationMilliseconds", hk: .heartRateVariabilitySDNN, unit: .secondUnit(with: .milli)),
-            samples(name: "Blood oxygen", dataType: "oxygen-saturation", key: "oxygenSaturation", field: "percentage",
+            samples(name: "חמצן בדם", dataType: "oxygen-saturation", key: "oxygenSaturation", field: "percentage",
                     hk: .oxygenSaturation, unit: .percent(), scale: 0.01),
-            daily(name: "Respiratory rate", dataType: "daily-respiratory-rate", key: "dailyRespiratoryRate",
+            daily(name: "קצב נשימה", dataType: "daily-respiratory-rate", key: "dailyRespiratoryRate",
                   field: "breathsPerMinute", hk: .respiratoryRate, unit: HKUnit.count().unitDivided(by: .minute())),
-            samples(name: "Weight", dataType: "weight", key: "weight", field: "weightGrams",
+            samples(name: "משקל", dataType: "weight", key: "weight", field: "weightGrams",
                     hk: .bodyMass, unit: .gram()),
-            samples(name: "Body fat", dataType: "body-fat", key: "bodyFat", field: "percentage",
+            samples(name: "אחוז שומן", dataType: "body-fat", key: "bodyFat", field: "percentage",
                     hk: .bodyFatPercentage, unit: .percent(), scale: 0.01),
-            samples(name: "Height", dataType: "height", key: "height", field: "heightMillimeters",
+            samples(name: "גובה", dataType: "height", key: "height", field: "heightMillimeters",
                     hk: .height, unit: .meter(), scale: 0.001),
 
             // MARK: sleep
             sleep,
 
             // MARK: nutrition
-            intervalSum(name: "Water", dataType: "hydration-log", key: "hydrationLog", field: "amountConsumed.milliliters",
+            intervalSum(name: "שתייה", dataType: "hydration-log", key: "hydrationLog", field: "amountConsumed.milliliters",
                         hk: .dietaryWater, unit: .literUnit(with: .milli), hourly: false),
-            intervalSum(name: "Dietary energy", dataType: "nutrition-log", key: "nutritionLog", field: "energy.kcal",
+            intervalSum(name: "קלוריות מתזונה", dataType: "nutrition-log", key: "nutritionLog", field: "energy.kcal",
                         hk: .dietaryEnergyConsumed, unit: .kilocalorie(), hourly: false),
         ]
     }
@@ -161,7 +161,7 @@ enum SyncCatalog {
     private static var heartRate: SyncItem {
         let type = HKQuantityType(.heartRate)
         let bpm = HKUnit.count().unitDivided(by: .minute())
-        return SyncItem(name: "Heart rate", hkType: type) { client, since, _ in
+        return SyncItem(name: "דופק", hkType: type) { client, since, _ in
             let points = try await client.listPoints(
                 dataType: "heart-rate", pointKey: "heartRate", since: since,
                 timeOf: GoogleHealthJSON.sampleTime, maxPages: 200)
@@ -183,7 +183,7 @@ enum SyncCatalog {
     /// Sleep sessions with stages → Apple Health sleep analysis.
     private static var sleep: SyncItem {
         let type = HKCategoryType(.sleepAnalysis)
-        return SyncItem(name: "Sleep", hkType: type) { client, since, _ in
+        return SyncItem(name: "שינה", hkType: type) { client, since, _ in
             // Sleep doesn't support dataSourceFamily; reconcile resolves overlapping sessions.
             let sessions = try await client.listPoints(
                 dataType: "sleep", pointKey: "sleep", since: since,
@@ -220,7 +220,7 @@ enum SyncCatalog {
 
     /// Exercise sessions → Apple Health workouts.
     private static var workouts: SyncItem {
-        SyncItem(name: "Workouts", hkType: HKObjectType.workoutType()) { client, since, _ in
+        SyncItem(name: "אימונים", hkType: HKObjectType.workoutType()) { client, since, _ in
             let sessions = try await client.listPoints(
                 dataType: "exercise", pointKey: "exercise", since: since,
                 timeOf: { GoogleHealthJSON.interval($0)?.start },

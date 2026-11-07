@@ -7,15 +7,15 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Google Health account") {
+                Section("חשבון Google Health") {
                     if auth.isSignedIn {
-                        Label("Connected", systemImage: "checkmark.circle.fill")
+                        Label("מחובר", systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
-                        Button("Disconnect", role: .destructive) {
+                        Button("התנתק", role: .destructive) {
                             auth.signOut()
                         }
                     } else {
-                        Button("Connect Google Health") {
+                        Button("התחבר ל‑Google Health") {
                             Task { await auth.signIn() }
                         }
                     }
@@ -26,40 +26,37 @@ struct ContentView: View {
                     }
                 }
 
-                Section("Sync") {
+                Section("סנכרון") {
                     Button {
                         Task { await sync.syncNow() }
                     } label: {
                         if sync.isSyncing {
-                            HStack {
+                            HStack(spacing: 10) {
                                 ProgressView()
-                                Text(sync.progress ?? "Syncing…")
+                                Text("מסנכרן…")
                                     .foregroundStyle(.secondary)
                             }
                         } else {
-                            Text("Sync Now")
+                            Text("סנכרן עכשיו")
                         }
                     }
                     .disabled(!auth.isSignedIn || sync.isSyncing)
 
-                    Button("Full resync (14 days)") {
-                        Task { await sync.syncNow(full: true) }
-                    }
-                    .font(.footnote)
-                    .disabled(!auth.isSignedIn || sync.isSyncing)
-
                     if let date = sync.lastSyncDate {
-                        Text("Last sync \(date, style: .relative) ago")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+                        Label {
+                            Text("הסנכרון הושלם: \(date.formatted(date: .abbreviated, time: .shortened))")
+                        } icon: {
+                            Image(systemName: "checkmark.seal.fill")
+                                .foregroundStyle(.green)
+                        }
                     }
-                    if let from = sync.syncedFrom, !sync.results.isEmpty {
-                        Text("Synced data from \(from, style: .date)")
+                    if !sync.failedTypes.isEmpty {
+                        Text("לא סונכרנו: \(sync.failedTypes.joined(separator: ", "))")
                             .font(.footnote)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.orange)
                     }
                     if sync.needsReconnect {
-                        Text("Some data types need permission. Tap Disconnect, then Connect Google Health again and allow all requested access.")
+                        Text("חסרה הרשאה לחלק מהנתונים: התנתק, התחבר מחדש ואשר את כל ההרשאות.")
                             .font(.footnote)
                             .foregroundStyle(.orange)
                     }
@@ -70,35 +67,15 @@ struct ContentView: View {
                     }
                 }
 
-                if !sync.results.isEmpty {
-                    Section("Last sync details") {
-                        ForEach(sync.results) { result in
-                            HStack(alignment: .firstTextBaseline) {
-                                Text(result.name)
-                                Spacer()
-                                if let error = result.error {
-                                    Text(error)
-                                        .font(.caption)
-                                        .foregroundStyle(.red)
-                                        .multilineTextAlignment(.trailing)
-                                        .lineLimit(3)
-                                } else {
-                                    Text("\(result.count ?? 0)")
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                    }
-                }
-
                 Section {
-                    Text("Sync Now pulls since the day before your last sync (yesterday + today when you sync daily); the first sync and Full resync pull 14 days. Data comes from Google Health (activity, heart, sleep, body measurements, workouts, nutrition) and writes them into Apple Health. Re-syncing replaces what StepsBridge wrote before, so nothing is duplicated. Re-authentication may be needed about once a week while the Google OAuth client is in Testing mode.")
+                    Text("מעביר מ‑Google Health ל‑Apple Health צעדים, דופק, שינה, אימונים, מדדי גוף ותזונה. כל סנכרון משלים את הימים מאז הסנכרון הקודם, בלי כפילויות. בערך פעם בשבוע ייתכן שתתבקש להתחבר מחדש ל‑Google.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("StepsBridge")
         }
+        .environment(\.layoutDirection, .rightToLeft)
     }
 }
 
