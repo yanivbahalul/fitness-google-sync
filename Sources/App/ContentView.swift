@@ -103,6 +103,21 @@ struct Card<Content: View>: View {
     }
 }
 
+/// Calm icon: the symbol in the accent color on a faint tint (used on the sync page).
+struct SoftIcon: View {
+    let symbol: String
+    var size: CGFloat = 32
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: size * 0.45, weight: .semibold))
+            .foregroundStyle(Theme.blue)
+            .frame(width: size, height: size)
+            .background(Theme.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: size * 0.28, style: .continuous))
+            .accessibilityHidden(true)
+    }
+}
+
 /// SF Symbol on a tinted rounded square, like the Health app.
 struct IconBadge: View {
     let symbol: String
@@ -237,7 +252,7 @@ private struct SyncCard: View {
                 }
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity, minHeight: 88)
-                .background(Theme.gradient, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .background(Theme.blue, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .opacity(sync.enabledCount == 0 ? 0.5 : 1)
             }
             .buttonStyle(.plain)
@@ -406,7 +421,7 @@ private struct CategoryCard: View {
                 set: { sync.setAll(in: category, $0) }
             )) {
                 HStack(spacing: 12) {
-                    IconBadge(symbol: category.symbol, color: category.color, size: 38)
+                    SoftIcon(symbol: category.symbol, size: 36)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(category.title)
                             .font(.headline)
@@ -416,7 +431,7 @@ private struct CategoryCard: View {
                     }
                 }
             }
-            .tint(category.color)
+            .tint(Theme.blue)
             .accessibilityLabel("\(category.title), הכול")
             .accessibilityValue("\(onCount) מתוך \(items.count) פעילים")
 
@@ -444,14 +459,18 @@ private struct ItemRow: View {
             set: { sync.setEnabled(item, $0) }
         )) {
             HStack(spacing: 12) {
-                IconBadge(symbol: item.symbol, color: color.opacity(0.85), size: 30)
+                Image(systemName: item.symbol)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 26)
+                    .accessibilityHidden(true)
                 Text(item.name)
                     .font(.body)
                 Spacer(minLength: 4)
                 StatusIcon(status: sync.status(for: item))
             }
         }
-        .tint(color)
+        .tint(Theme.blue)
         .frame(minHeight: 44)
     }
 }
