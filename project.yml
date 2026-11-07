@@ -34,6 +34,10 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         UIRequiresFullScreen: true
+        UIBackgroundModes:
+          - fetch
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.yanivbahalul.stepsbridge.refresh
         NSHealthShareUsageDescription: "StepsBridge only manages the data it wrote itself, so re-syncing never creates duplicates."
         NSHealthUpdateUsageDescription: "StepsBridge writes your Google Health data (activity, heart, sleep, body measurements, workouts, nutrition) into Health."
         CFBundleURLTypes:

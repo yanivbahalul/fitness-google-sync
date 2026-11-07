@@ -3,6 +3,8 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var auth: GoogleAuthManager
     @EnvironmentObject private var sync: SyncCoordinator
+    @State private var showSettings = false
+    @State private var showHistory = false
 
     var body: some View {
         NavigationStack {
@@ -11,10 +13,13 @@ struct ContentView: View {
                     HeaderCard()
                     if auth.isSignedIn {
                         SyncCard()
+                        if let today = sync.today {
+                            TodayCard(today: today)
+                        }
+                        OverlapNotice()
                         ForEach(SyncCategory.allCases) { category in
                             CategoryCard(category: category)
                         }
-                        AccountCard()
                     } else {
                         ConnectCard()
                     }
@@ -24,6 +29,22 @@ struct ContentView: View {
             }
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button { showSettings = true } label: {
+                        Image(systemName: "gearshape.fill")
+                    }
+                    .accessibilityLabel("הגדרות")
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button { showHistory = true } label: {
+                        Image(systemName: "clock.arrow.circlepath")
+                    }
+                    .accessibilityLabel("יומן סנכרונים")
+                }
+            }
+            .sheet(isPresented: $showSettings) { SettingsView() }
+            .sheet(isPresented: $showHistory) { HistoryView() }
         }
         .environment(\.layoutDirection, .rightToLeft)
     }
@@ -43,14 +64,14 @@ extension SyncCategory {
     }
 }
 
-private enum Theme {
+enum Theme {
     /// Same blue → pink as the app icon (Google Health half → Apple Health half).
-    static let gradient = LinearGradient(
-        colors: [Color(red: 0.20, green: 0.52, blue: 1.0), Color(red: 1.0, green: 0.30, blue: 0.42)],
-        startPoint: .leading, endPoint: .trailing)
+    static let blue = Color(red: 0.20, green: 0.52, blue: 1.0)
+    static let pink = Color(red: 1.0, green: 0.30, blue: 0.42)
+    static let gradient = LinearGradient(colors: [blue, pink], startPoint: .leading, endPoint: .trailing)
 }
 
-private struct Card<Content: View>: View {
+struct Card<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -62,7 +83,7 @@ private struct Card<Content: View>: View {
 }
 
 /// SF Symbol on a tinted rounded square, like the Health app.
-private struct IconBadge: View {
+struct IconBadge: View {
     let symbol: String
     let color: Color
     var size: CGFloat = 32
@@ -74,6 +95,23 @@ private struct IconBadge: View {
             .frame(width: size, height: size)
             .background(color.gradient, in: RoundedRectangle(cornerRadius: size * 0.28, style: .continuous))
             .accessibilityHidden(true)
+    }
+}
+
+struct Notice: View {
+    let symbol: String
+    let color: Color
+    let text: String
+
+    var body: some View {
+        Label {
+            Text(text).font(.footnote)
+        } icon: {
+            Image(systemName: symbol).foregroundStyle(color)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
@@ -97,21 +135,19 @@ private struct HeaderCard: View {
                     .font(.title2.bold())
                 HStack(spacing: 6) {
                     Text("Google Health")
-                    Image(systemName: "arrow.left")
-                        .accessibilityHidden(true)
+                    Image(systemName: "arrow.left").accessibilityHidden(true)
                     Text("Apple Health")
                 }
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("מעביר נתונים מ‑Google Health אל Apple Health")
+                StatusPill(connected: auth.isSignedIn)
+                    .padding(.top, 2)
             }
             Spacer(minLength: 0)
         }
         .padding(.vertical, 4)
-        .overlay(alignment: .topTrailing) {
-            StatusPill(connected: auth.isSignedIn)
-        }
     }
 }
 
@@ -119,10 +155,10 @@ private struct StatusPill: View {
     let connected: Bool
 
     var body: some View {
-        Label(connected ? "מחובר" : "לא מחובר", systemImage: connected ? "checkmark.circle.fill" : "xmark.circle.fill")
+        Label(connected ? "מחובר ל‑Google" : "לא מחובר", systemImage: connected ? "checkmark.circle.fill" : "xmark.circle.fill")
             .font(.caption.weight(.semibold))
             .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .padding(.vertical, 4)
             .foregroundStyle(connected ? .green : .secondary)
             .background((connected ? Color.green : Color.gray).opacity(0.15), in: Capsule())
     }
@@ -173,7 +209,7 @@ private struct SyncCard: View {
                     } else {
                         Label("סנכרן עכשיו", systemImage: "arrow.triangle.2.circlepath")
                             .font(.title3.bold())
-                        Text("\(sync.enabledCount) סוגי נתונים נבחרו")
+                        Text("\(sync.enabledCount) סוגי נתונים · \(sync.range.title)")
                             .font(.subheadline)
                             .opacity(0.9)
                     }
@@ -187,35 +223,44 @@ private struct SyncCard: View {
             .disabled(sync.isSyncing || sync.enabledCount == 0)
             .accessibilityLabel(sync.isSyncing ? "מסנכרן, \(Int(sync.progress * 100)) אחוז" : "סנכרן עכשיו, \(sync.enabledCount) סוגי נתונים")
 
-            if let date = sync.lastSyncDate {
-                Label {
-                    Text("הסנכרון הושלם: \(date.formatted(date: .abbreviated, time: .shortened))")
-                } icon: {
-                    Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
+            HStack {
+                if let date = sync.lastSyncDate {
+                    Label {
+                        Text("הושלם: \(date.formatted(date: .abbreviated, time: .shortened))")
+                    } icon: {
+                        Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
+                    }
+                    .font(.subheadline)
+                } else {
+                    Text("עדיין לא סונכרן").font(.subheadline).foregroundStyle(.secondary)
                 }
-                .font(.subheadline)
+                Spacer(minLength: 8)
+                Menu {
+                    Picker("טווח סנכרון", selection: $sync.range) {
+                        ForEach(SyncRange.allCases) { range in
+                            Text(range.title).tag(range)
+                        }
+                    }
+                } label: {
+                    Label(sync.range.title, systemImage: "calendar")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color(.tertiarySystemFill), in: Capsule())
+                }
+                .accessibilityLabel("טווח סנכרון: \(sync.range.title)")
+                .disabled(sync.isSyncing)
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("טווח סנכרון")
-                    .font(.subheadline.weight(.semibold))
-                Picker("טווח סנכרון", selection: $sync.range) {
-                    ForEach(SyncRange.allCases) { range in
-                        Text(range.title).tag(range)
-                    }
-                }
-                .pickerStyle(.segmented)
-                Text(sync.range == .automatic
-                     ? "משלים אוטומטית מאז הסנכרון האחרון של כל סוג נתונים (עד 14 יום)."
-                     : "מסנכרן מחדש את הימים האחרונים, בלי כפילויות.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-            .disabled(sync.isSyncing)
+            Text(sync.range == .automatic
+                 ? "אוטומטי: משלים כל סוג נתונים מאז הסנכרון האחרון שלו (אתמול והיום כשמסנכרנים כל יום, עד 14 יום)."
+                 : "מסנכרן מחדש את \(sync.range.title) האחרונים, בלי כפילויות.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
 
             if sync.needsReconnect {
                 Notice(symbol: "key.fill", color: .orange,
-                       text: "חסרה הרשאה לחלק מהנתונים. התנתק בתחתית המסך, התחבר מחדש ואשר את כל ההרשאות.")
+                       text: "חסרה הרשאה לחלק מהנתונים. בהגדרות: התנתק, התחבר מחדש ואשר את כל ההרשאות.")
             }
             if let error = sync.lastError {
                 Notice(symbol: "exclamationmark.triangle.fill", color: .red, text: error)
@@ -224,20 +269,103 @@ private struct SyncCard: View {
     }
 }
 
-private struct Notice: View {
+// MARK: - Today
+
+private struct TodayTile: Identifiable {
     let symbol: String
+    let value: String
     let color: Color
-    let text: String
+    let title: String
+    var id: String { title }
+}
+
+private struct TodayCard: View {
+    let today: TodaySummary
+
+    private var tiles: [TodayTile] {
+        var result: [TodayTile] = []
+        if let steps = today.steps {
+            result.append(TodayTile(symbol: "figure.walk", value: steps.formatted(), color: Color.orange, title: "צעדים"))
+        }
+        if let minutes = today.sleepMinutes {
+            result.append(TodayTile(symbol: "bed.double.fill", value: String(format: "%d:%02d", minutes / 60, minutes % 60),
+                                    color: Color.indigo, title: "שינה (שעות)"))
+        }
+        if let bpm = today.restingHeartRate {
+            result.append(TodayTile(symbol: "heart.fill", value: "\(bpm)", color: Color.red, title: "דופק במנוחה"))
+        }
+        if let kcal = today.activeKcal {
+            result.append(TodayTile(symbol: "flame.fill", value: kcal.formatted(), color: Color.pink, title: "קלוריות פעילות"))
+        }
+        return result
+    }
 
     var body: some View {
-        Label {
-            Text(text).font(.footnote)
-        } icon: {
-            Image(systemName: symbol).foregroundStyle(color)
+        if !tiles.isEmpty {
+            Card {
+                Text("היום")
+                    .font(.headline)
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                    ForEach(tiles) { tile in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Image(systemName: tile.symbol)
+                                .foregroundStyle(tile.color)
+                                .accessibilityHidden(true)
+                            Text(tile.value)
+                                .font(.title2.bold())
+                                .monospacedDigit()
+                                .minimumScaleFactor(0.7)
+                                .lineLimit(1)
+                            Text(tile.title)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(tile.color.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+            }
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+// MARK: - Google Health overlap
+
+private struct OverlapNotice: View {
+    @EnvironmentObject private var sync: SyncCoordinator
+    @AppStorage("overlapNoticeDismissed") private var dismissed = false
+
+    var body: some View {
+        if sync.enabledOverlapCount > 0 && !dismissed {
+            Card {
+                HStack(alignment: .top, spacing: 10) {
+                    IconBadge(symbol: "square.on.square", color: .orange, size: 32)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("אפשרות לכפילויות")
+                            .font(.headline)
+                        Text("אפליקציית Google Health יודעת לכתוב בעצמה ל‑Apple Health צעדים, דופק, דופק במנוחה, שינה ואימונים. אם החיבור הזה פעיל אצלך (Google Health ← חיבורים ← Apple Health), כבה אותם כאן כדי שלא ייכתבו פעמיים.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                HStack {
+                    Button {
+                        sync.disableOverlapping()
+                    } label: {
+                        Text("כבה את \(sync.enabledOverlapCount) הכפולים")
+                            .frame(maxWidth: .infinity, minHeight: 36)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.orange)
+                    Button("החיבור לא פעיל אצלי") { dismissed = true }
+                        .buttonStyle(.bordered)
+                        .frame(minHeight: 36)
+                }
+                .font(.subheadline.weight(.semibold))
+            }
+        }
     }
 }
 
@@ -276,6 +404,8 @@ private struct CategoryCard: View {
                 ForEach(items) { item in
                     ItemRow(item: item, color: category.color)
                 }
+            } else if let item = items.first, let status = sync.status(for: item) {
+                HStack { StatusIcon(status: status); Text(status.text).font(.caption).foregroundStyle(.secondary) }
             }
         }
         .disabled(sync.isSyncing)
@@ -294,14 +424,30 @@ private struct ItemRow: View {
         )) {
             HStack(spacing: 12) {
                 IconBadge(symbol: item.symbol, color: color.opacity(0.85), size: 30)
-                Text(item.name)
-                    .font(.body)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(item.name)
+                        .font(.body)
+                    if sync.isAlsoWrittenByGoogleHealth(item) {
+                        Text("גם Google Health יכול לסנכרן")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Spacer(minLength: 4)
                 StatusIcon(status: sync.status(for: item))
             }
         }
         .tint(color)
         .frame(minHeight: 44)
+    }
+}
+
+extension ItemStatus {
+    var text: String {
+        switch self {
+        case .synced(let count): return "סונכרן · \(count) רשומות"
+        case .failed(let message): return message
+        }
     }
 }
 
@@ -315,8 +461,7 @@ private struct StatusIcon: View {
                 .foregroundStyle(.green)
                 .accessibilityLabel("סונכרן, \(count) רשומות")
         case .failed(let message):
-            Label(message, systemImage: "exclamationmark.triangle.fill")
-                .labelStyle(.iconOnly)
+            Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
                 .accessibilityLabel("לא סונכרן: \(message)")
         case nil:
@@ -325,33 +470,8 @@ private struct StatusIcon: View {
     }
 }
 
-// MARK: - Account
-
-private struct AccountCard: View {
-    @EnvironmentObject private var auth: GoogleAuthManager
-
-    var body: some View {
-        Card {
-            Label("חשבון ותחזוקה", systemImage: "gearshape.fill")
-                .font(.headline)
-            Text("כל סנכרון מחליף רק את מה ש‑StepsBridge כתב בעבר, כך שאין כפילויות. פעם בשבוע חבר את האייפון ל‑Mac ולחץ ▶️ ב‑Xcode כדי לחדש את האפליקציה.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-            Button(role: .destructive) {
-                auth.signOut()
-            } label: {
-                Label("התנתק מ‑Google", systemImage: "rectangle.portrait.and.arrow.right")
-                    .frame(maxWidth: .infinity, minHeight: 44)
-            }
-            .buttonStyle(.bordered)
-            .buttonBorderShape(.roundedRectangle(radius: 12))
-        }
-    }
-}
-
 #Preview {
-    let auth = GoogleAuthManager()
-    return ContentView()
-        .environmentObject(auth)
-        .environmentObject(SyncCoordinator(auth: auth))
+    ContentView()
+        .environmentObject(AppState.auth)
+        .environmentObject(AppState.sync)
 }

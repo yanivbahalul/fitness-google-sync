@@ -99,6 +99,23 @@ enum SyncCatalog {
 
     static var shareTypes: Set<HKSampleType> { Set(all.map(\.hkType)) }
 
+    /// Types the Google Health iPhone app itself can write to Apple Health (since its
+    /// August 2026 update). Syncing them from both apps would duplicate them.
+    static let alsoWrittenByGoogleHealthApp: Set<String> = [
+        HKQuantityTypeIdentifier.stepCount.rawValue,
+        HKQuantityTypeIdentifier.heartRate.rawValue,
+        HKQuantityTypeIdentifier.restingHeartRate.rawValue,
+        HKCategoryTypeIdentifier.sleepAnalysis.rawValue,
+        HKObjectType.workoutType().identifier,
+    ]
+
+    /// Off by default on a fresh install: HRV only exists in Apple's SDNN form when Google
+    /// provides it (usually not), and height rarely changes.
+    static let offByDefault: Set<String> = [
+        HKQuantityTypeIdentifier.heartRateVariabilitySDNN.rawValue,
+        HKQuantityTypeIdentifier.height.rawValue,
+    ]
+
     // MARK: - Builders
 
     /// Reads a possibly nested field such as "amountConsumed.milliliters".

@@ -3,7 +3,7 @@ import HealthKit
 
 /// How far back a sync reaches.
 enum SyncRange: String, CaseIterable, Identifiable {
-    case automatic, days3, days7, days14
+    case automatic, days3, days7, days14, days30, days90
     var id: String { rawValue }
 
     var title: String {
@@ -12,6 +12,8 @@ enum SyncRange: String, CaseIterable, Identifiable {
         case .days3: return "3 ימים"
         case .days7: return "שבוע"
         case .days14: return "14 יום"
+        case .days30: return "30 יום"
+        case .days90: return "90 יום"
         }
     }
 
@@ -21,6 +23,8 @@ enum SyncRange: String, CaseIterable, Identifiable {
         case .days3: return 3
         case .days7: return 7
         case .days14: return 14
+        case .days30: return 30
+        case .days90: return 90
         }
     }
 }
@@ -31,6 +35,28 @@ enum ItemStatus: Equatable {
     case failed(message: String)
 }
 
+/// Summary of one sync run (used for the Shortcuts reply and notifications).
+struct SyncOutcome {
+    var syncedTypes = 0
+    var failedTypes: [String] = []
+    var records = 0
+    var error: String?
+
+    var summary: String {
+        if let error { return error }
+        if failedTypes.isEmpty { return "הסנכרון הושלם: \(syncedTypes) סוגי נתונים, \(records) רשומות." }
+        return "סונכרנו \(syncedTypes) סוגי נתונים. לא סונכרנו: \(failedTypes.joined(separator: ", "))."
+    }
+}
+
+/// Today's highlights, computed from the data written in the last sync.
+struct TodaySummary: Codable, Equatable {
+    var steps: Int?
+    var sleepMinutes: Int?
+    var restingHeartRate: Int?
+    var activeKcal: Int?
+}
+
 @MainActor
 final class SyncCoordinator: ObservableObject {
     let items = SyncCatalog.all
@@ -38,11 +64,12 @@ final class SyncCoordinator: ObservableObject {
     @Published var isSyncing = false
     /// Fraction done (0...1) while syncing.
     @Published var progress: Double = 0
-    /// When the last sync finished.
     @Published var lastSyncDate: Date?
     @Published var lastError: String?
     @Published var needsReconnect = false
     @Published private(set) var status: [String: ItemStatus] = [:]
+    @Published private(set) var history: [SyncLogEntry] = SyncHistory.load()
+    @Published private(set) var today: TodaySummary?
 
     /// Which data types are switched on (persisted).
     @Published var enabled: Set<String> {
@@ -56,11 +83,12 @@ final class SyncCoordinator: ObservableObject {
     private let healthClient: GoogleHealthClient
     private let healthKitWriter = HealthKitWriter()
 
-    private let maxWindowDays = 14
+    private let maxAutomaticDays = 14
     private static let lastSyncKey = "lastSuccessfulSync"
     private static let perItemKey = "lastSyncPerItem"
     private static let enabledKey = "enabledItems"
     private static let rangeKey = "syncRange"
+    private static let todayKey = "todaySummary"
 
     /// Last successful sync per data type (HealthKit identifier → date).
     private var lastSyncPerItem: [String: Date] {
@@ -76,9 +104,14 @@ final class SyncCoordinator: ObservableObject {
         if let saved = defaults.array(forKey: Self.enabledKey) as? [String] {
             self.enabled = Set(saved)
         } else {
-            self.enabled = Set(SyncCatalog.all.map(\.id))
+            self.enabled = Set(SyncCatalog.all.map(\.id)).subtracting(SyncCatalog.offByDefault)
         }
         self.range = SyncRange(rawValue: defaults.string(forKey: Self.rangeKey) ?? "") ?? .automatic
+        if let data = defaults.data(forKey: Self.todayKey),
+           let saved = try? JSONDecoder().decode(TodaySummary.self, from: data),
+           let last = lastSyncDate, Calendar.current.isDateInToday(last) {
+            self.today = saved
+        }
     }
 
     // MARK: - Selection helpers
@@ -105,34 +138,58 @@ final class SyncCoordinator: ObservableObject {
 
     var enabledCount: Int { items.filter(isEnabled).count }
 
+    func isAlsoWrittenByGoogleHealth(_ item: SyncItem) -> Bool {
+        SyncCatalog.alsoWrittenByGoogleHealthApp.contains(item.id)
+    }
+
+    /// Enabled types that the Google Health app can also write (possible duplicates).
+    var enabledOverlapCount: Int {
+        items.filter { isEnabled($0) && isAlsoWrittenByGoogleHealth($0) }.count
+    }
+
+    /// Leaves the overlapping types to the Google Health app.
+    func disableOverlapping() {
+        enabled.subtract(SyncCatalog.alsoWrittenByGoogleHealthApp)
+    }
+
     // MARK: - Sync
 
     /// Start of the window for one item.
     ///
     /// Automatic: from the start of the day before that item's last sync (covers last
     /// night's sleep and late-finalized daily values; synced daily = yesterday + today),
-    /// so switching a type back on catches up the days it missed. Never more than 14 days.
-    private func windowStart(for item: SyncItem, now: Date) -> Date {
+    /// so switching a type back on catches up the days it missed. At most 14 days.
+    private func windowStart(for item: SyncItem, now: Date, range: SyncRange) -> Date {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: now)
         if let days = range.days {
             return calendar.date(byAdding: .day, value: -(days - 1), to: today)!
         }
-        let earliest = calendar.date(byAdding: .day, value: -maxWindowDays, to: today)!
+        let earliest = calendar.date(byAdding: .day, value: -maxAutomaticDays, to: today)!
         guard let last = lastSyncPerItem[item.id] ?? lastSyncDate else { return earliest }
         let fromLast = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: last))!
         return max(earliest, min(fromLast, today))
     }
 
-    func syncNow() async {
+    /// Runs a sync. Automatic triggers (app open, background, Shortcuts) always use the
+    /// automatic range; the range picker applies to manual syncs.
+    @discardableResult
+    func syncNow(trigger: SyncTrigger = .manual) async -> SyncOutcome {
+        var outcome = SyncOutcome()
+        guard !isSyncing else {
+            outcome.error = "סנכרון כבר מתבצע."
+            return outcome
+        }
         guard auth.isSignedIn else {
-            lastError = "יש להתחבר קודם ל‑Google."
-            return
+            outcome.error = "יש להתחבר קודם ל‑Google."
+            if trigger == .manual { lastError = outcome.error }
+            return outcome
         }
         let selected = items.filter(isEnabled)
         guard !selected.isEmpty else {
-            lastError = "לא נבחר אף סוג נתונים לסנכרון."
-            return
+            outcome.error = "לא נבחר אף סוג נתונים לסנכרון."
+            if trigger == .manual { lastError = outcome.error }
+            return outcome
         }
 
         isSyncing = true
@@ -141,17 +198,21 @@ final class SyncCoordinator: ObservableObject {
         needsReconnect = false
         defer { isSyncing = false }
 
+        let effectiveRange = trigger == .manual ? range : .automatic
+
         do {
             try await healthKitWriter.requestAuthorization(toShare: Set(selected.map(\.hkType)))
             // Refresh the access token once up front so the parallel requests share it.
             _ = try await auth.validAccessToken()
         } catch {
-            lastError = error.localizedDescription
-            return
+            if let authError = error as? AuthError, case .http = authError { needsReconnect = true }
+            outcome.error = "לא ניתן להתחבר ל‑Google: \(error.localizedDescription)"
+            finish(outcome, trigger: trigger, rangeTitle: effectiveRange.title)
+            return outcome
         }
 
         let now = Date()
-        let windows = Dictionary(uniqueKeysWithValues: selected.map { ($0.id, windowStart(for: $0, now: now)) })
+        let windows = Dictionary(uniqueKeysWithValues: selected.map { ($0.id, windowStart(for: $0, now: now, range: effectiveRange)) })
         let client = healthClient
         let total = Double(selected.count * 2) // fetch + write per item
 
@@ -175,14 +236,16 @@ final class SyncCoordinator: ObservableObject {
         }
 
         // Write to Apple Health.
-        var succeeded = 0
+        var todaySummary = TodaySummary()
         for item in selected {
             do {
                 let samples = try fetched[item.id]!.get()
                 let written = try await healthKitWriter.replace(item.hkType, since: windows[item.id]!, with: samples)
                 status[item.id] = .synced(count: written)
                 lastSyncPerItem[item.id] = now
-                succeeded += 1
+                outcome.syncedTypes += 1
+                outcome.records += written
+                Self.addToToday(&todaySummary, item: item, samples: samples, now: now)
             } catch {
                 if let error = error as? GoogleHealthError, error.isPermissionDenied {
                     needsReconnect = true
@@ -190,15 +253,73 @@ final class SyncCoordinator: ObservableObject {
                 } else {
                     status[item.id] = .failed(message: "נכשל")
                 }
+                outcome.failedTypes.append(item.name)
             }
             progress += 1 / total
         }
 
-        if succeeded > 0 {
+        if outcome.syncedTypes > 0 {
             lastSyncDate = now
             UserDefaults.standard.set(now, forKey: Self.lastSyncKey)
+            today = todaySummary
+            if let data = try? JSONEncoder().encode(todaySummary) {
+                UserDefaults.standard.set(data, forKey: Self.todayKey)
+            }
         } else {
-            lastError = "הסנכרון נכשל. בדוק חיבור לאינטרנט, או התנתק והתחבר מחדש ל‑Google."
+            outcome.error = "הסנכרון נכשל. בדוק חיבור לאינטרנט, או התנתק והתחבר מחדש ל‑Google."
+        }
+        finish(outcome, trigger: trigger, rangeTitle: effectiveRange.title)
+        return outcome
+    }
+
+    private func finish(_ outcome: SyncOutcome, trigger: SyncTrigger, rangeTitle: String) {
+        if trigger == .manual || trigger == .appOpen {
+            lastError = outcome.error
+        }
+        history = SyncHistory.append(SyncLogEntry(
+            date: Date(), trigger: trigger, rangeTitle: rangeTitle,
+            records: outcome.records, syncedTypes: outcome.syncedTypes, failedTypes: outcome.failedTypes))
+
+        // Tell the user about problems in syncs they didn't start by hand.
+        guard trigger != .manual, AppSettings.notifyProblems else { return }
+        if needsReconnect {
+            Notifier.notify(title: "StepsBridge צריך חיבור מחדש",
+                            body: "פתח את האפליקציה, התנתק והתחבר מחדש ל‑Google כדי שהסנכרון ימשיך.",
+                            id: "reconnect")
+        } else if let error = outcome.error {
+            Notifier.notify(title: "הסנכרון של StepsBridge נכשל", body: error, id: "sync-failed")
+        }
+    }
+
+    private static func addToToday(_ summary: inout TodaySummary, item: SyncItem, samples: [HKSample], now: Date) {
+        let calendar = Calendar.current
+        let startOfToday = calendar.startOfDay(for: now)
+        let todays = samples.compactMap { $0 as? HKQuantitySample }.filter { $0.startDate >= startOfToday }
+
+        switch item.hkType.identifier {
+        case HKQuantityTypeIdentifier.stepCount.rawValue:
+            summary.steps = Int(todays.reduce(0) { $0 + $1.quantity.doubleValue(for: .count()) })
+        case HKQuantityTypeIdentifier.activeEnergyBurned.rawValue:
+            summary.activeKcal = Int(todays.reduce(0) { $0 + $1.quantity.doubleValue(for: .kilocalorie()) })
+        case HKQuantityTypeIdentifier.restingHeartRate.rawValue:
+            let bpm = HKUnit.count().unitDivided(by: .minute())
+            let all = samples.compactMap { $0 as? HKQuantitySample }.sorted { $0.startDate > $1.startDate }
+            if let latest = all.first { summary.restingHeartRate = Int(latest.quantity.doubleValue(for: bpm)) }
+        case HKCategoryTypeIdentifier.sleepAnalysis.rawValue:
+            // Last night: asleep stages that ended after yesterday 18:00.
+            let cutoff = calendar.date(byAdding: .hour, value: -6, to: startOfToday)!
+            let asleep: Set<Int> = [
+                HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue,
+                HKCategoryValueSleepAnalysis.asleepCore.rawValue,
+                HKCategoryValueSleepAnalysis.asleepDeep.rawValue,
+                HKCategoryValueSleepAnalysis.asleepREM.rawValue,
+            ]
+            let seconds = samples.compactMap { $0 as? HKCategorySample }
+                .filter { asleep.contains($0.value) && $0.endDate > cutoff }
+                .reduce(0.0) { $0 + $1.endDate.timeIntervalSince($1.startDate) }
+            if seconds > 0 { summary.sleepMinutes = Int(seconds / 60) }
+        default:
+            break
         }
     }
 }
