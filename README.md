@@ -34,14 +34,13 @@ retired Fitbit Web API) — see <https://developers.google.com/health/about>.
      and add: `.../auth/googlehealth.activity_and_fitness.readonly`.
 4. Create the **OAuth client ID** (APIs & Services → Credentials → Create Credentials →
    OAuth client ID):
-   - Google's Health API setup guide says to choose **Web application** as the type
-     (it issues a client secret, needed for the refresh-token flow this app uses).
-   - Authorized redirect URI: `com.yanivbahalul.stepsbridge:/oauth2redirect`
-   - **Note:** if the Cloud Console rejects a non-`https` redirect URI for a Web
-     application client, switch the client type to **iOS** or **Desktop app** instead —
-     those accept custom URL schemes. This app's code doesn't change either way; only
-     the console step does.
-5. Copy the **Client ID** and **Client secret**.
+   - **Recommended: Application type = iOS**, Bundle ID = `com.yanivbahalul.stepsbridge`.
+     iOS clients accept the app's custom-scheme redirect and don't issue a client
+     secret — the app works without one.
+   - Alternative: **Web application** (what Google's Health API guide shows). It issues a
+     client secret, but the Cloud Console may reject the custom-scheme redirect URI
+     `com.yanivbahalul.stepsbridge:/oauth2redirect` for Web clients. If it does, use iOS.
+5. Copy the **Client ID** (and the **Client secret**, only if you made a Web client).
 6. **Link your Google Health profile**: on your phone, install the "Google Health" app
    (App Store/Play Store) and sign in with the same Google account before first connecting
    from StepsBridge — the OAuth consent screen can't detect this for you.
@@ -54,7 +53,8 @@ cp Sources/Config/Secrets.example.plist Sources/Config/Secrets.plist
 
 Edit `Sources/Config/Secrets.plist` and fill in:
 - `GoogleOAuthClientID` — the Client ID from step 1.5
-- `GoogleOAuthClientSecret` — the Client secret from step 1.5
+- `GoogleOAuthClientSecret` — the Client secret from step 1.5, or leave it as
+  `YOUR_CLIENT_SECRET` / empty if you made an iOS-type client
 - `GoogleOAuthRedirectURI` — leave as `com.yanivbahalul.stepsbridge:/oauth2redirect`
   unless you changed the bundle ID in `project.yml`, in which case match it there too.
 
@@ -66,7 +66,7 @@ On a Mac, with Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen) insta
 (`brew install xcodegen`):
 
 ```
-cd StepsBridge
+cd fitness-google-sync   # the repo root, where project.yml lives
 xcodegen generate
 open StepsBridge.xcodeproj
 ```
@@ -78,6 +78,10 @@ In Xcode:
 3. Tap **Connect Google Health**, sign in, grant the steps permission.
 4. Tap **Sync Now**. Open Apple Health → Browse → Activity → Steps to confirm the data
    landed there.
+
+A GitHub Actions workflow (`.github/workflows/build.yml`) compiles the app on a macOS
+runner on every push (unsigned, with placeholder config), so you know the code builds
+before you open Xcode.
 
 ## How it works
 

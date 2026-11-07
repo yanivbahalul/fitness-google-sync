@@ -97,12 +97,10 @@ final class GoogleAuthManager: NSObject, ObservableObject {
         var request = URLRequest(url: tokenURL)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = formBody([
-            "client_id": AppConfig.googleClientID,
-            "client_secret": AppConfig.googleClientSecret,
+        request.httpBody = formBody(withClientCredentials([
             "refresh_token": refreshToken,
             "grant_type": "refresh_token",
-        ])
+        ]))
 
         let (data, response) = try await URLSession.shared.data(for: request)
         try Self.assertSuccess(response, data: data)
@@ -120,14 +118,12 @@ final class GoogleAuthManager: NSObject, ObservableObject {
         var request = URLRequest(url: tokenURL)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = formBody([
-            "client_id": AppConfig.googleClientID,
-            "client_secret": AppConfig.googleClientSecret,
+        request.httpBody = formBody(withClientCredentials([
             "code": code,
             "code_verifier": verifier,
             "grant_type": "authorization_code",
             "redirect_uri": AppConfig.googleRedirectURI,
-        ])
+        ]))
 
         let (data, response) = try await URLSession.shared.data(for: request)
         try Self.assertSuccess(response, data: data)
@@ -159,6 +155,16 @@ final class GoogleAuthManager: NSObject, ObservableObject {
             self.webAuthSession = session
             session.start()
         }
+    }
+
+    /// Adds client_id, plus client_secret only when one is configured (Web-type clients).
+    private func withClientCredentials(_ params: [String: String]) -> [String: String] {
+        var params = params
+        params["client_id"] = AppConfig.googleClientID
+        if let secret = AppConfig.googleClientSecret {
+            params["client_secret"] = secret
+        }
+        return params
     }
 
     private func formBody(_ params: [String: String]) -> Data {

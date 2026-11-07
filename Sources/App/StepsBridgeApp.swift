@@ -2,7 +2,7 @@ import SwiftUI
 
 @main
 struct StepsBridgeApp: App {
-    @StateObject private var auth = GoogleAuthManager()
+    @StateObject private var auth: GoogleAuthManager
     @StateObject private var sync: SyncCoordinator
 
     init() {
