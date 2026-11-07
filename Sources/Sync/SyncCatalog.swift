@@ -47,7 +47,7 @@ struct SyncItem: Identifiable {
     }
 }
 
-/// Everything StepsBridge syncs. Field names follow the Google Health API v4 reference
+/// Everything HealthBridge syncs. Field names follow the Google Health API v4 reference
 /// (users.dataTypes.dataPoints). Each item syncs independently, so one failing type
 /// (e.g. a scope you didn't grant) doesn't stop the rest.
 enum SyncCatalog {

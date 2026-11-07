@@ -334,11 +334,11 @@ final class SyncCoordinator: ObservableObject {
         // Tell the user about problems in syncs they didn't start by hand.
         guard trigger != .manual, AppSettings.notifyProblems else { return }
         if needsReconnect {
-            Notifier.notify(title: "StepsBridge צריך חיבור מחדש",
+            Notifier.notify(title: "HealthBridge צריך חיבור מחדש",
                             body: "פתח את האפליקציה, התנתק והתחבר מחדש ל‑Google כדי שהסנכרון ימשיך.",
                             id: "reconnect")
         } else if let error = outcome.error {
-            Notifier.notify(title: "הסנכרון של StepsBridge נכשל", body: error, id: "sync-failed")
+            Notifier.notify(title: "הסנכרון של HealthBridge נכשל", body: error, id: "sync-failed")
         }
     }
 
@@ -385,7 +385,7 @@ final class SyncCoordinator: ObservableObject {
         var matches: Bool { google == stepsBridge }
     }
 
-    /// Compares, per day, Google Health's daily total with what StepsBridge wrote and with
+    /// Compares, per day, Google Health's daily total with what HealthBridge wrote and with
     /// Apple Health's displayed total.
     func stepsComparison(days: Int = 7) async throws -> [StepsDay] {
         let calendar = Calendar.current

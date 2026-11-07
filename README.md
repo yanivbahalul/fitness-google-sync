@@ -1,4 +1,6 @@
-# StepsBridge
+# HealthBridge
+
+*(Shown on the iPhone as **HealthBridge**; the Xcode project, target and bundle ID keep the original `StepsBridge` name so the Google OAuth client and existing Apple Health data stay linked.)*
 
 Pulls your daily step totals from **Google Health** (the service your fitness band syncs
 to) and writes them into **Apple Health**, replacing the "Fitness Data Sync" app whose

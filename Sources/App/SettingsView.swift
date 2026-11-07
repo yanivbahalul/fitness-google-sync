@@ -24,7 +24,7 @@ struct SettingsView: View {
                         SettingLabel("בדיקת צעדים מול Google", symbol: "checkmark.shield.fill", color: .green)
                     }
                 } footer: {
-                    Text("משווה לכל יום את הסך של Google Health מול מה ש‑StepsBridge כתב ומול מה ש‑Apple Health מציג.")
+                    Text("משווה לכל יום את הסך של Google Health מול מה ש‑HealthBridge כתב ומול מה ש‑Apple Health מציג.")
                 }
 
                 Section {
@@ -60,7 +60,7 @@ struct SettingsView: View {
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
                         SettingLabel("סנכרון יומי בשעה קבועה", symbol: "square.stack.3d.up.fill", color: .pink)
-                        Text("בקיצורים ← אוטומציה ← + ← שעה ביום (למשל 08:00) ← הפעל מיד ← הוסף את הפעולה \"סנכרן את StepsBridge\".")
+                        Text("בקיצורים ← אוטומציה ← + ← שעה ביום (למשל 08:00) ← הפעל מיד ← הוסף את הפעולה \"סנכרן את HealthBridge\".")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -224,7 +224,7 @@ struct StepsCheckView: View {
                             }
                             HStack(spacing: 8) {
                                 NumberTile(title: "Google", value: row.google, color: Theme.blue)
-                                NumberTile(title: "StepsBridge", value: row.stepsBridge, color: row.matches ? .green : .orange)
+                                NumberTile(title: "HealthBridge", value: row.stepsBridge, color: row.matches ? .green : .orange)
                                 NumberTile(title: "Apple Health", value: row.appleHealth, color: Theme.pink)
                             }
                         }
@@ -234,8 +234,8 @@ struct StepsCheckView: View {
                 }
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Google = הסך היומי שמופיע באפליקציית Google Health. StepsBridge = מה שהאפליקציה כתבה. Apple Health = מה שמוצג באפליקציית בריאות.")
-                    Text("אם StepsBridge תואם ל‑Google אבל Apple Health שונה, Apple מערבב צעדים מהאייפון: בריאות ← צעדים ← מקורות נתונים וגישה ← עריכה ← גרור את StepsBridge לראש הרשימה.")
+                    Text("Google = הסך היומי שמופיע באפליקציית Google Health. HealthBridge = מה שהאפליקציה כתבה. Apple Health = מה שמוצג באפליקציית בריאות.")
+                    Text("אם HealthBridge תואם ל‑Google אבל Apple Health שונה, Apple מערבב צעדים מהאייפון: בריאות ← צעדים ← מקורות נתונים וגישה ← עריכה ← גרור את HealthBridge לראש הרשימה.")
                     Text("אם היום לא תואם, סנכרן קודם (הצעדים של היום מתעדכנים כל הזמן).")
                 }
             }

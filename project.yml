@@ -22,7 +22,7 @@ targets:
     info:
       path: Sources/App/Info.plist
       properties:
-        CFBundleDisplayName: StepsBridge
+        CFBundleDisplayName: HealthBridge
         CFBundleShortVersionString: "1.0"
         CFBundleVersionString: "1"
         UILaunchScreen: {}
@@ -38,8 +38,8 @@ targets:
           - fetch
         BGTaskSchedulerPermittedIdentifiers:
           - com.yanivbahalul.stepsbridge.refresh
-        NSHealthShareUsageDescription: "StepsBridge only manages the data it wrote itself, so re-syncing never creates duplicates."
-        NSHealthUpdateUsageDescription: "StepsBridge writes your Google Health data (activity, heart, sleep, body measurements, workouts, nutrition) into Health."
+        NSHealthShareUsageDescription: "HealthBridge only manages the data it wrote itself, so re-syncing never creates duplicates."
+        NSHealthUpdateUsageDescription: "HealthBridge writes your Google Health data (activity, heart, sleep, body measurements, workouts, nutrition) into Health."
         CFBundleURLTypes:
           - CFBundleURLSchemes:
               - $(GOOGLE_OAUTH_REDIRECT_SCHEME)

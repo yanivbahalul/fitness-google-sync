@@ -1,9 +1,9 @@
 import AppIntents
 
-/// "Sync StepsBridge" action for the Shortcuts app. With a personal automation
-/// (e.g. every day at 08:00 → Sync StepsBridge) the sync runs daily without opening the app.
+/// "Sync HealthBridge" action for the Shortcuts app. With a personal automation
+/// (e.g. every day at 08:00 → Sync HealthBridge) the sync runs daily without opening the app.
 struct SyncIntent: AppIntent {
-    static var title: LocalizedStringResource = "סנכרן את StepsBridge"
+    static var title: LocalizedStringResource = "סנכרן את HealthBridge"
     static var description = IntentDescription("מעביר את הנתונים החדשים מ‑Google Health אל Apple Health.")
     static var openAppWhenRun = false
 
@@ -17,7 +17,7 @@ struct SyncIntent: AppIntent {
 /// "How many calories did I eat today?" — sets today's eaten total (e.g. copied from Cali).
 struct SetEatenIntent: AppIntent {
     static var title: LocalizedStringResource = "הזן קלוריות שנאכלו היום"
-    static var description = IntentDescription("מעדכן את סך הקלוריות שנאכלו היום במאזן הקלורי של StepsBridge.")
+    static var description = IntentDescription("מעדכן את סך הקלוריות שנאכלו היום במאזן הקלורי של HealthBridge.")
     static var openAppWhenRun = false
 
     @Parameter(title: "קלוריות", requestValueDialog: IntentDialog("כמה קלוריות נאכלו היום בסך הכול?"))

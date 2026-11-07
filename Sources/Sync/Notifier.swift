@@ -42,13 +42,13 @@ enum Notifier {
 
         let reminders: [(String, Date, String)] = [
             (expiryEveID, expiry.addingTimeInterval(-24 * 3600),
-             "StepsBridge יפסיק להיפתח מחר. חבר את האייפון ל‑Mac ולחץ ▶️ ב‑Xcode כדי לחדש."),
+             "HealthBridge יפסיק להיפתח מחר. חבר את האייפון ל‑Mac ולחץ ▶️ ב‑Xcode כדי לחדש."),
             (expiryID, expiry.addingTimeInterval(-3 * 3600),
-             "StepsBridge יפסיק להיפתח בעוד כ‑3 שעות. חבר את האייפון ל‑Mac ולחץ ▶️ ב‑Xcode."),
+             "HealthBridge יפסיק להיפתח בעוד כ‑3 שעות. חבר את האייפון ל‑Mac ולחץ ▶️ ב‑Xcode."),
         ]
         for (id, date, body) in reminders where date > Date() {
             let content = UNMutableNotificationContent()
-            content.title = "צריך לחדש את StepsBridge"
+            content.title = "צריך לחדש את HealthBridge"
             content.body = body
             content.sound = .default
             let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: date)

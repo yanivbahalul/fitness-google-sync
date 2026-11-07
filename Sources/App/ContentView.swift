@@ -128,7 +128,7 @@ private struct HeaderCard: View {
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("StepsBridge")
+                Text("HealthBridge")
                     .font(.title2.bold())
                 HStack(spacing: 6) {
                     Text("Google Health")

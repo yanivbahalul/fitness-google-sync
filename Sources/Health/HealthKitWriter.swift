@@ -19,7 +19,7 @@ final class HealthKitWriter {
     }
 
     /// Daily step totals in Apple Health from `start` (local midnight) for `days` days.
-    /// `onlyThisApp`: only what StepsBridge wrote; otherwise Apple Health's merged total
+    /// `onlyThisApp`: only what HealthBridge wrote; otherwise Apple Health's merged total
     /// (the number the Health app shows, after its source-priority de-duplication).
     func dailySteps(from start: Date, days: Int, onlyThisApp: Bool) async throws -> [Date: Double] {
         let type = HKQuantityType(.stepCount)
