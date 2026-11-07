@@ -26,6 +26,14 @@ targets:
         CFBundleShortVersionString: "1.0"
         CFBundleVersionString: "1"
         UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIRequiresFullScreen: true
         NSHealthShareUsageDescription: "StepsBridge only manages the data it wrote itself, so re-syncing never creates duplicates."
         NSHealthUpdateUsageDescription: "StepsBridge writes your Google Health data (activity, heart, sleep, body measurements, workouts, nutrition) into Health."
         CFBundleURLTypes:
