@@ -14,9 +14,6 @@ struct ContentView: View {
                     if auth.isSignedIn {
                         SyncCard()
                         EnergyCard()
-                        if let today = sync.today {
-                            TodayCard(today: today)
-                        }
                         ForEach(SyncCategory.allCases) { category in
                             CategoryCard(category: category)
                         }
@@ -264,68 +261,6 @@ private struct SyncCard: View {
             }
             if let error = sync.lastError {
                 Notice(symbol: "exclamationmark.triangle.fill", color: .red, text: error)
-            }
-        }
-    }
-}
-
-// MARK: - Today
-
-private struct TodayTile: Identifiable {
-    let symbol: String
-    let value: String
-    let color: Color
-    let title: String
-    var id: String { title }
-}
-
-private struct TodayCard: View {
-    let today: TodaySummary
-
-    private var tiles: [TodayTile] {
-        var result: [TodayTile] = []
-        if let steps = today.steps {
-            result.append(TodayTile(symbol: "figure.walk", value: steps.formatted(), color: Color.orange, title: "צעדים"))
-        }
-        if let minutes = today.sleepMinutes {
-            result.append(TodayTile(symbol: "bed.double.fill", value: String(format: "%d:%02d", minutes / 60, minutes % 60),
-                                    color: Color.indigo, title: "שינה (שעות)"))
-        }
-        if let bpm = today.restingHeartRate {
-            result.append(TodayTile(symbol: "heart.fill", value: "\(bpm)", color: Color.red, title: "דופק במנוחה"))
-        }
-        if let kcal = today.activeKcal {
-            result.append(TodayTile(symbol: "flame.fill", value: kcal.formatted(), color: Color.pink, title: "קלוריות פעילות"))
-        }
-        return result
-    }
-
-    var body: some View {
-        if !tiles.isEmpty {
-            Card {
-                Text("היום")
-                    .font(.headline)
-                LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
-                    ForEach(tiles) { tile in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Image(systemName: tile.symbol)
-                                .foregroundStyle(tile.color)
-                                .accessibilityHidden(true)
-                            Text(tile.value)
-                                .font(.title2.bold())
-                                .monospacedDigit()
-                                .minimumScaleFactor(0.7)
-                                .lineLimit(1)
-                            Text(tile.title)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(tile.color.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .accessibilityElement(children: .combine)
-                    }
-                }
             }
         }
     }
