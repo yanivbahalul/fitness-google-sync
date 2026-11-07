@@ -56,8 +56,7 @@ enum SyncCatalog {
     static var all: [SyncItem] {
         [
             // MARK: activity_and_fitness
-            intervalSum(name: "צעדים", dataType: "steps", key: "steps", field: "count",
-                        hk: .stepCount, unit: .count()).tagged(.activity, "figure.walk"),
+            steps.tagged(.activity, "figure.walk"),
             intervalSum(name: "מרחק", dataType: "distance", key: "distance", field: "millimeters",
                         hk: .distanceWalkingRunning, unit: .meter(), scale: 0.001).tagged(.activity, "map.fill"),
             intervalSum(name: "קלוריות פעילות", dataType: "active-energy-burned", key: "activeEnergyBurned", field: "kcal",
@@ -98,16 +97,6 @@ enum SyncCatalog {
     }
 
     static var shareTypes: Set<HKSampleType> { Set(all.map(\.hkType)) }
-
-    /// Types the Google Health iPhone app itself can write to Apple Health (since its
-    /// August 2026 update). Syncing them from both apps would duplicate them.
-    static let alsoWrittenByGoogleHealthApp: Set<String> = [
-        HKQuantityTypeIdentifier.stepCount.rawValue,
-        HKQuantityTypeIdentifier.heartRate.rawValue,
-        HKQuantityTypeIdentifier.restingHeartRate.rawValue,
-        HKCategoryTypeIdentifier.sleepAnalysis.rawValue,
-        HKObjectType.workoutType().identifier,
-    ]
 
     /// Off by default on a fresh install: HRV only exists in Apple's SDNN form when Google
     /// provides it (usually not), and height rarely changes.
@@ -210,6 +199,68 @@ enum SyncCatalog {
                                         start: day, end: min(dayEnd, max(now, day)), metadata: meta)
             }
         }
+    }
+
+    /// Steps that match Google Health's own daily totals exactly.
+    ///
+    /// Google's daily total (dailyRollUp, the number the Google Health app shows) is the
+    /// source of truth. Hourly totals (rollUp, 1-hour windows) only spread each day's total
+    /// across the hours so Apple Health gets a useful graph; they are scaled so every day
+    /// adds up to Google's number to the step. If hourly data isn't available, the day is
+    /// written as one sample.
+    private static var steps: SyncItem {
+        let type = HKQuantityType(.stepCount)
+        return SyncItem(name: "צעדים", hkType: type) { client, since, now in
+            let calendar = Calendar.current
+            let endOfToday = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now))!
+
+            let daily = try await client.dailyRollUp(dataType: "steps", valueKey: "steps", from: since, to: endOfToday)
+
+            var hourly: [(start: Date, value: Double)] = []
+            do {
+                hourly = try await client.rollUp(dataType: "steps", valueKey: "steps", from: since, to: now,
+                                                 windowSeconds: 3600, pick: GoogleHealthJSON.sumNumber)
+            } catch let error as GoogleHealthError where error.isPermissionDenied {
+                throw error
+            } catch {
+                hourly = [] // fall back to one sample per day
+            }
+
+            var samples: [HKSample] = []
+            for (day, total) in daily where total > 0 {
+                guard let dayEnd = calendar.date(byAdding: .day, value: 1, to: day) else { continue }
+                let hours = hourly.filter { $0.start >= day && $0.start < dayEnd && $0.value > 0 }
+                let counts = distribute(Int(total.rounded()), over: hours.map { $0.value })
+                if counts.isEmpty {
+                    samples.append(HKQuantitySample(type: type, quantity: HKQuantity(unit: .count(), doubleValue: total),
+                                                    start: day, end: min(dayEnd, max(now, day.addingTimeInterval(1))),
+                                                    metadata: meta))
+                    continue
+                }
+                for (hour, count) in zip(hours, counts) where count > 0 {
+                    let end = min(hour.start.addingTimeInterval(3600), max(now, hour.start.addingTimeInterval(1)))
+                    samples.append(HKQuantitySample(type: type, quantity: HKQuantity(unit: .count(), doubleValue: Double(count)),
+                                                    start: hour.start, end: end, metadata: meta))
+                }
+            }
+            return samples
+        }
+    }
+
+    /// Splits `total` into integers proportional to `weights` that add up to exactly
+    /// `total` (largest-remainder rounding). Empty when there are no positive weights.
+    static func distribute(_ total: Int, over weights: [Double]) -> [Int] {
+        let sum = weights.reduce(0, +)
+        guard sum > 0, total > 0 else { return [] }
+        let exact = weights.map { Double(total) * $0 / sum }
+        var result = exact.map { Int($0.rounded(.down)) }
+        var remaining = total - result.reduce(0, +)
+        let order = exact.indices.sorted { (exact[$0] - exact[$0].rounded(.down)) > (exact[$1] - exact[$1].rounded(.down)) }
+        for i in order where remaining > 0 {
+            result[i] += 1
+            remaining -= 1
+        }
+        return result
     }
 
     /// Heart rate as 5-minute averages. Raw heart rate can be a sample every few seconds

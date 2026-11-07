@@ -11,11 +11,43 @@ final class HealthKitWriter {
     let store = HKHealthStore()
     static let metadataKey = "StepsBridge.googleHealth"
 
-    func requestAuthorization(toShare types: Set<HKSampleType>) async throws {
+    func requestAuthorization(toShare types: Set<HKSampleType>, read: Set<HKObjectType> = []) async throws {
         guard HKHealthStore.isHealthDataAvailable() else {
             throw HealthKitWriterError.notAvailable
         }
-        try await store.requestAuthorization(toShare: types, read: [])
+        try await store.requestAuthorization(toShare: types, read: read)
+    }
+
+    /// Daily step totals in Apple Health from `start` (local midnight) for `days` days.
+    /// `onlyThisApp`: only what StepsBridge wrote; otherwise Apple Health's merged total
+    /// (the number the Health app shows, after its source-priority de-duplication).
+    func dailySteps(from start: Date, days: Int, onlyThisApp: Bool) async throws -> [Date: Double] {
+        let type = HKQuantityType(.stepCount)
+        let calendar = Calendar.current
+        let end = calendar.date(byAdding: .day, value: days, to: start)!
+        var predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
+        if onlyThisApp {
+            predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+                predicate, HKQuery.predicateForObjects(from: HKSource.default()),
+            ])
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKStatisticsCollectionQuery(
+                quantityType: type, quantitySamplePredicate: predicate,
+                options: .cumulativeSum, anchorDate: start, intervalComponents: DateComponents(day: 1))
+            query.initialResultsHandler = { _, collection, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                var totals: [Date: Double] = [:]
+                collection?.enumerateStatistics(from: start, to: end) { stats, _ in
+                    totals[stats.startDate] = stats.sumQuantity()?.doubleValue(for: .count()) ?? 0
+                }
+                continuation.resume(returning: totals)
+            }
+            store.execute(query)
+        }
     }
 
     /// Replaces this app's samples of `type` that start on/after `since` with `samples`.

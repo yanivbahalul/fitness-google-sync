@@ -16,7 +16,6 @@ struct ContentView: View {
                         if let today = sync.today {
                             TodayCard(today: today)
                         }
-                        OverlapNotice()
                         ForEach(SyncCategory.allCases) { category in
                             CategoryCard(category: category)
                         }
@@ -331,44 +330,6 @@ private struct TodayCard: View {
     }
 }
 
-// MARK: - Google Health overlap
-
-private struct OverlapNotice: View {
-    @EnvironmentObject private var sync: SyncCoordinator
-    @AppStorage("overlapNoticeDismissed") private var dismissed = false
-
-    var body: some View {
-        if sync.enabledOverlapCount > 0 && !dismissed {
-            Card {
-                HStack(alignment: .top, spacing: 10) {
-                    IconBadge(symbol: "square.on.square", color: .orange, size: 32)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("אפשרות לכפילויות")
-                            .font(.headline)
-                        Text("אפליקציית Google Health יודעת לכתוב בעצמה ל‑Apple Health צעדים, דופק, דופק במנוחה, שינה ואימונים. אם החיבור הזה פעיל אצלך (Google Health ← חיבורים ← Apple Health), כבה אותם כאן כדי שלא ייכתבו פעמיים.")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                HStack {
-                    Button {
-                        sync.disableOverlapping()
-                    } label: {
-                        Text("כבה את \(sync.enabledOverlapCount) הכפולים")
-                            .frame(maxWidth: .infinity, minHeight: 36)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.orange)
-                    Button("החיבור לא פעיל אצלי") { dismissed = true }
-                        .buttonStyle(.bordered)
-                        .frame(minHeight: 36)
-                }
-                .font(.subheadline.weight(.semibold))
-            }
-        }
-    }
-}
-
 // MARK: - Categories
 
 private struct CategoryCard: View {
@@ -424,15 +385,8 @@ private struct ItemRow: View {
         )) {
             HStack(spacing: 12) {
                 IconBadge(symbol: item.symbol, color: color.opacity(0.85), size: 30)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(item.name)
-                        .font(.body)
-                    if sync.isAlsoWrittenByGoogleHealth(item) {
-                        Text("גם Google Health יכול לסנכרן")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                Text(item.name)
+                    .font(.body)
                 Spacer(minLength: 4)
                 StatusIcon(status: sync.status(for: item))
             }

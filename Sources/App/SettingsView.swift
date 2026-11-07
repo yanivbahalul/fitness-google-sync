@@ -10,13 +10,22 @@ struct SettingsView: View {
     @AppStorage(AppSettings.backgroundSyncKey) private var backgroundSync = true
     @AppStorage(AppSettings.notifyProblemsKey) private var notifyProblems = true
     @AppStorage(AppSettings.expiryReminderKey) private var expiryReminder = true
-    @AppStorage("overlapNoticeDismissed") private var overlapNoticeDismissed = false
 
     private let expiry = Notifier.signingExpiry
 
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    NavigationLink {
+                        StepsCheckView()
+                    } label: {
+                        SettingLabel("בדיקת צעדים מול Google", symbol: "checkmark.shield.fill", color: .green)
+                    }
+                } footer: {
+                    Text("משווה לכל יום את הסך של Google Health מול מה ש‑StepsBridge כתב ומול מה ש‑Apple Health מציג.")
+                }
+
                 Section {
                     Toggle(isOn: $autoSyncOnOpen) {
                         SettingLabel("סנכרון בפתיחת האפליקציה", symbol: "iphone", color: .blue)
@@ -63,18 +72,6 @@ struct SettingsView: View {
                     Text("התראות")
                 } footer: {
                     Text("עם Apple ID חינמי האפליקציה פגה 7 ימים אחרי ההתקנה. תקבל התראה יום לפני, ואז מחברים את האייפון ל‑Mac ולוחצים ▶️ ב‑Xcode.")
-                }
-
-                Section {
-                    Text("אפליקציית Google Health יכולה לכתוב בעצמה ל‑Apple Health צעדים, דופק, דופק במנוחה, שינה ואימונים. אם החיבור הזה פעיל אצלך, השאר אותם כבויים כאן.")
-                        .font(.footnote)
-                    Button("כבה את הסוגים הכפולים") { sync.disableOverlapping() }
-                        .disabled(sync.enabledOverlapCount == 0)
-                    if overlapNoticeDismissed {
-                        Button("הצג שוב את ההודעה במסך הראשי") { overlapNoticeDismissed = false }
-                    }
-                } header: {
-                    Text("כפילויות")
                 }
 
                 Section {
@@ -181,5 +178,100 @@ struct HistoryView: View {
             }
         }
         .environment(\.layoutDirection, .rightToLeft)
+    }
+}
+
+struct StepsCheckView: View {
+    @EnvironmentObject private var sync: SyncCoordinator
+    @State private var rows: [SyncCoordinator.StepsDay] = []
+    @State private var loading = false
+    @State private var error: String?
+
+    var body: some View {
+        List {
+            Section {
+                if loading {
+                    HStack { ProgressView(); Text("בודק…").foregroundStyle(.secondary) }
+                } else if let error {
+                    Text(error).foregroundStyle(.red).font(.footnote)
+                } else {
+                    ForEach(rows) { row in
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text(row.day.formatted(.dateTime.weekday(.wide).day().month()))
+                                    .font(.body.weight(.semibold))
+                                Spacer()
+                                Image(systemName: row.matches ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                    .foregroundStyle(row.matches ? .green : .orange)
+                                    .accessibilityLabel(row.matches ? "תואם" : "לא תואם")
+                            }
+                            HStack(spacing: 8) {
+                                NumberTile(title: "Google", value: row.google, color: Theme.blue)
+                                NumberTile(title: "StepsBridge", value: row.stepsBridge, color: row.matches ? .green : .orange)
+                                NumberTile(title: "Apple Health", value: row.appleHealth, color: Theme.pink)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+            } footer: {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Google = הסך היומי שמופיע באפליקציית Google Health. StepsBridge = מה שהאפליקציה כתבה. Apple Health = מה שמוצג באפליקציית בריאות.")
+                    Text("אם StepsBridge תואם ל‑Google אבל Apple Health שונה, Apple מערבב צעדים מהאייפון: בריאות ← צעדים ← מקורות נתונים וגישה ← עריכה ← גרור את StepsBridge לראש הרשימה.")
+                    Text("אם היום לא תואם, סנכרן קודם (הצעדים של היום מתעדכנים כל הזמן).")
+                }
+            }
+
+            Section {
+                Button {
+                    Task {
+                        await sync.syncNow()
+                        await load()
+                    }
+                } label: {
+                    Label("סנכרן ובדוק שוב", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(loading || sync.isSyncing)
+            }
+        }
+        .navigationTitle("בדיקת צעדים")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+        .refreshable { await load() }
+    }
+
+    private func load() async {
+        loading = true
+        error = nil
+        defer { loading = false }
+        do {
+            rows = try await sync.stepsComparison(days: 7)
+        } catch {
+            self.error = "הבדיקה נכשלה: \(error.localizedDescription)"
+        }
+    }
+}
+
+private struct NumberTile: View {
+    let title: String
+    let value: Int
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value.formatted())
+                .font(.headline)
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }

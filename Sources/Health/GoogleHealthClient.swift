@@ -99,7 +99,8 @@ final class GoogleHealthClient {
     /// `windowSeconds` window. Requests at most 7 days at a time (the API caps some
     /// types, e.g. heart rate, at 14 days per request).
     func rollUp(dataType: String, valueKey: String, from start: Date, to end: Date,
-                windowSeconds: Int) async throws -> [(start: Date, value: Double)] {
+                windowSeconds: Int,
+                pick: @escaping (Any?) -> Double? = GoogleHealthJSON.averageNumber) async throws -> [(start: Date, value: Double)] {
         var results: [(start: Date, value: Double)] = []
         var chunkStart = start
         while chunkStart < end {
@@ -120,7 +121,7 @@ final class GoogleHealthClient {
                 let json = try await send(request)
                 for point in (json["rollupDataPoints"] as? [[String: Any]]) ?? [] {
                     guard let time = GoogleHealthJSON.timestamp(point["startTime"]),
-                          let value = GoogleHealthJSON.averageNumber(in: point[valueKey])
+                          let value = pick(point[valueKey])
                     else { continue }
                     results.append((time, value))
                 }
@@ -242,6 +243,16 @@ enum GoogleHealthJSON {
                 if k.contains("avg") || k.contains("average") || k.contains("mean"), let n = number(dict[key]) {
                     return n
                 }
+            }
+        }
+        return firstNumber(in: any)
+    }
+
+    /// Total from a rollup value object (prefers fields named ...Sum, e.g. countSum).
+    static func sumNumber(in any: Any?) -> Double? {
+        if let dict = any as? [String: Any] {
+            for key in dict.keys.sorted() where key.lowercased().contains("sum") {
+                if let n = number(dict[key]) { return n }
             }
         }
         return firstNumber(in: any)

@@ -138,20 +138,6 @@ final class SyncCoordinator: ObservableObject {
 
     var enabledCount: Int { items.filter(isEnabled).count }
 
-    func isAlsoWrittenByGoogleHealth(_ item: SyncItem) -> Bool {
-        SyncCatalog.alsoWrittenByGoogleHealthApp.contains(item.id)
-    }
-
-    /// Enabled types that the Google Health app can also write (possible duplicates).
-    var enabledOverlapCount: Int {
-        items.filter { isEnabled($0) && isAlsoWrittenByGoogleHealth($0) }.count
-    }
-
-    /// Leaves the overlapping types to the Google Health app.
-    func disableOverlapping() {
-        enabled.subtract(SyncCatalog.alsoWrittenByGoogleHealthApp)
-    }
-
     // MARK: - Sync
 
     /// Start of the window for one item.
@@ -201,7 +187,8 @@ final class SyncCoordinator: ObservableObject {
         let effectiveRange = trigger == .manual ? range : .automatic
 
         do {
-            try await healthKitWriter.requestAuthorization(toShare: Set(selected.map(\.hkType)))
+            try await healthKitWriter.requestAuthorization(toShare: Set(selected.map(\.hkType)),
+                                                          read: [HKQuantityType(.stepCount)])
             // Refresh the access token once up front so the parallel requests share it.
             _ = try await auth.validAccessToken()
         } catch {
@@ -320,6 +307,40 @@ final class SyncCoordinator: ObservableObject {
             if seconds > 0 { summary.sleepMinutes = Int(seconds / 60) }
         default:
             break
+        }
+    }
+
+    // MARK: - Steps check
+
+    struct StepsDay: Identifiable {
+        let day: Date
+        let google: Int
+        let stepsBridge: Int
+        let appleHealth: Int
+        var id: Date { day }
+        var matches: Bool { google == stepsBridge }
+    }
+
+    /// Compares, per day, Google Health's daily total with what StepsBridge wrote and with
+    /// Apple Health's displayed total.
+    func stepsComparison(days: Int = 7) async throws -> [StepsDay] {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let start = calendar.date(byAdding: .day, value: -(days - 1), to: today)!
+        let end = calendar.date(byAdding: .day, value: 1, to: today)!
+
+        try await healthKitWriter.requestAuthorization(toShare: [], read: [HKQuantityType(.stepCount)])
+        let google = try await healthClient.dailyRollUp(dataType: "steps", valueKey: "steps", from: start, to: end)
+        let googleByDay = Dictionary(google.map { ($0.day, $0.value) }, uniquingKeysWith: +)
+        let mine = try await healthKitWriter.dailySteps(from: start, days: days, onlyThisApp: true)
+        let merged = try await healthKitWriter.dailySteps(from: start, days: days, onlyThisApp: false)
+
+        return (0..<days).reversed().map { offset in
+            let day = calendar.date(byAdding: .day, value: offset, to: start)!
+            return StepsDay(day: day,
+                            google: Int((googleByDay[day] ?? 0).rounded()),
+                            stepsBridge: Int((mine[day] ?? 0).rounded()),
+                            appleHealth: Int((merged[day] ?? 0).rounded()))
         }
     }
 }
