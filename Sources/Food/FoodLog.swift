@@ -100,6 +100,19 @@ final class FoodLog: ObservableObject {
         }
     }
 
+    /// Timestamp for food logged "on" a day: now for today, the same time of day for a past day.
+    static func entryDate(for day: Date) -> Date {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(day) { return Date() }
+        let time = calendar.dateComponents([.hour, .minute], from: Date())
+        return calendar.date(bySettingHour: time.hour ?? 12, minute: time.minute ?? 0, second: 0,
+                             of: calendar.startOfDay(for: day)) ?? day
+    }
+
+    func total(on day: Date) -> Double {
+        entries(on: day).map(\.kcal).reduce(0, +)
+    }
+
     func entries(on day: Date) -> [FoodEntry] {
         entries.filter { Calendar.current.isDate($0.date, inSameDayAs: day) }.sorted { $0.date > $1.date }
     }
@@ -112,8 +125,8 @@ final class FoodLog: ObservableObject {
         await add(new)
     }
 
-    func addQuick(kcal: Double, name: String = "הזנה מהירה") async {
-        await add([FoodEntry(date: Date(), name: name, grams: nil, kcal: kcal,
+    func addQuick(kcal: Double, name: String = "הזנה מהירה", at date: Date = Date()) async {
+        await add([FoodEntry(date: date, name: name, grams: nil, kcal: kcal,
                              protein: 0, carbs: 0, fat: 0, source: .quick)])
     }
 
@@ -172,6 +185,33 @@ final class FoodLog: ObservableObject {
             lastError = nil
         } catch {
             lastError = "השמירה ב‑Apple Health נכשלה: \(error.localizedDescription)"
+        }
+    }
+
+    /// Calories eaten per day that other apps (e.g. Cali) wrote to Apple Health, excluding
+    /// what this app wrote, so nothing is counted twice.
+    func otherAppsDailyKcal(from start: Date, days: Int) async -> [Date: Double] {
+        let type = HKQuantityType(.dietaryEnergyConsumed)
+        try? await store.requestAuthorization(toShare: [], read: [type])
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: start)
+        let end = calendar.date(byAdding: .day, value: days, to: start)!
+        let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate),
+            NSCompoundPredicate(notPredicateWithSubpredicate: HKQuery.predicateForObjects(from: HKSource.default())),
+        ])
+        return await withCheckedContinuation { continuation in
+            let query = HKStatisticsCollectionQuery(quantityType: type, quantitySamplePredicate: predicate,
+                                                    options: .cumulativeSum, anchorDate: start,
+                                                    intervalComponents: DateComponents(day: 1))
+            query.initialResultsHandler = { _, collection, _ in
+                var totals: [Date: Double] = [:]
+                collection?.enumerateStatistics(from: start, to: end) { stats, _ in
+                    if let v = stats.sumQuantity()?.doubleValue(for: .kilocalorie()), v > 0 { totals[stats.startDate] = v }
+                }
+                continuation.resume(returning: totals)
+            }
+            store.execute(query)
         }
     }
 

@@ -293,100 +293,63 @@ private struct SyncCard: View {
 // MARK: - Calorie balance
 
 struct EnergyCard: View {
+    let day: Date
     @EnvironmentObject private var sync: SyncCoordinator
+    @ObservedObject private var food = FoodLog.shared
     @AppStorage(AppSettings.deficitGoalKey) private var goal = 500
-    @State private var editingEaten = false
-    @State private var eatenText = ""
+    @State private var burned: Int?
+    @State private var otherApps = 0
+    @State private var loadingBurned = false
+
+    private var isToday: Bool { Calendar.current.isDateInToday(day) }
 
     var body: some View {
+        let eaten = Int(food.total(on: day).rounded()) + otherApps
         Card {
             HStack {
-                Label("מאזן קלורי היום", systemImage: "chart.bar.xaxis")
+                Label(isToday ? "מאזן קלורי היום" : "מאזן קלורי", systemImage: "chart.bar.xaxis")
                     .font(.headline)
                 Spacer()
-                Button {
-                    Task { await sync.refreshEnergy() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .accessibilityLabel("רענן מאזן קלורי")
+                if loadingBurned { ProgressView() }
             }
 
-            if let energy = sync.energy {
-                HStack(spacing: 10) {
-                    EnergyTile(title: "נשרפו", value: energy.burned, symbol: "flame.fill", color: .orange)
-                    Button {
-                        eatenText = energy.eaten > 0 ? String(energy.eaten) : ""
-                        editingEaten = true
-                    } label: {
-                        EnergyTile(title: "נאכלו", value: energy.eaten, symbol: "fork.knife", color: .teal,
-                                   badge: "pencil")
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityHint("הקש כדי להזין את הקלוריות שנאכלו היום")
-                }
+            HStack(spacing: 10) {
+                EnergyTile(title: isToday ? "נשרפו עד עכשיו" : "נשרפו", value: burned, symbol: "flame.fill", color: .orange)
+                EnergyTile(title: otherApps > 0 ? "נאכלו (כולל Cali)" : "נאכלו", value: eaten, symbol: "fork.knife", color: .teal)
+            }
 
-                Button {
-                    eatenText = energy.eaten > 0 ? String(energy.eaten) : ""
-                    editingEaten = true
-                } label: {
-                    Label("עדכן נאכלו", systemImage: "square.and.pencil")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 40)
-                }
-                .buttonStyle(.bordered)
-                .tint(.teal)
-
-                if let deficit = energy.deficit {
-                    let reached = deficit >= goal
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(deficit >= 0 ? "גרעון" : "עודף")
-                                .font(.subheadline.weight(.semibold))
-                            Spacer()
-                            Text("\(abs(deficit).formatted()) קק\"ל")
-                                .font(.title2.bold())
-                                .monospacedDigit()
-                                .foregroundStyle(deficit >= 0 ? .green : .orange)
-                        }
-                        ProgressView(value: Double(max(0, min(deficit, goal))), total: Double(max(goal, 1)))
-                            .tint(reached ? .green : Theme.blue)
-                        Text(reached
-                             ? "הגעת ליעד הגרעון היומי (\(goal.formatted()) קק\"ל) 🎉"
-                             : "יעד: \(goal.formatted()) קק\"ל גרעון · נשארו \(max(0, goal - deficit).formatted())")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            if let burned {
+                let deficit = burned - eaten
+                let reached = deficit >= goal
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(deficit >= 0 ? "גרעון" : "עודף")
+                            .font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Text("\(abs(deficit).formatted()) קק\"ל")
+                            .font(.title2.bold())
+                            .monospacedDigit()
                     }
-                    .accessibilityElement(children: .combine)
-                } else {
-                    Text("עוד אין נתון של קלוריות שנשרפו היום מ‑Google.")
-                        .font(.footnote)
+                    ProgressView(value: Double(max(0, min(deficit, goal))), total: Double(max(goal, 1)))
+                        .tint(reached ? .green : Theme.blue)
+                    Text(reached
+                         ? "הגעת ליעד הגרעון היומי (\(goal.formatted()) קק\"ל) 🎉"
+                         : "יעד: \(goal.formatted()) קק\"ל גרעון · נשארו \(max(0, goal - deficit).formatted())")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-
-                Text(energy.eatenIsManual
-                     ? "נשרפו = סך הקלוריות מהצמיד (כולל מנוחה) עד עכשיו. נאכלו = מה שהזנת היום."
-                     : "נשרפו = סך הקלוריות מהצמיד (כולל מנוחה) עד עכשיו. הקש \"עדכן נאכלו\" כדי להזין את הסך מ‑Cali.")
-                    .font(.caption2)
+                .accessibilityElement(children: .combine)
+            } else if !loadingBurned {
+                Text("אין נתון של קלוריות שנשרפו ביום הזה מ‑Google.")
+                    .font(.footnote)
                     .foregroundStyle(.secondary)
-            } else {
-                HStack { ProgressView(); Text("מחשב…").foregroundStyle(.secondary) }
             }
         }
-        .task { if sync.energy == nil { await sync.refreshEnergy() } }
-        .alert("כמה קלוריות נאכלו היום?", isPresented: $editingEaten) {
-            TextField("קק\"ל", text: $eatenText)
-                .keyboardType(.numberPad)
-            Button("שמור") {
-                let digits = eatenText.filter(\.isNumber)
-                sync.setManualEatenToday(Int(digits))
-            }
-            if sync.manualEatenToday != nil {
-                Button("מחק הזנה", role: .destructive) { sync.setManualEatenToday(nil) }
-            }
-            Button("ביטול", role: .cancel) {}
-        } message: {
-            Text("הקלד את הסך היומי שמופיע ב‑Cali.")
+        .task(id: day) {
+            loadingBurned = true
+            otherApps = Int((await food.otherAppsDailyKcal(from: day, days: 1)).values.reduce(0, +).rounded())
+            burned = await sync.burned(on: day)
+            loadingBurned = false
         }
     }
 }

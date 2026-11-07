@@ -112,12 +112,17 @@ final class ProgressModel: ObservableObject {
 
         // Calorie balance: only days with logged food and a burned value from Google.
         let burned = await sync.dailyBurned(days: range.rawValue)
-        let eatenTotals = food.dailyTotals()
+        var eatenTotals = food.dailyTotals()
+        // Add food other apps (e.g. Cali) wrote to Apple Health.
+        for (day, kcal) in await food.otherAppsDailyKcal(from: start, days: range.rawValue) {
+            let t = eatenTotals[day] ?? (0, 0, 0, 0)
+            eatenTotals[day] = (t.kcal + kcal, t.protein, t.carbs, t.fat)
+        }
         var days: [DayBalance] = []
         for offset in 0..<range.rawValue {
             let day = calendar.date(byAdding: .day, value: offset, to: start)!
             guard day < today else { continue }  // today is incomplete
-            let eaten = sync.manualEaten(on: day).map(Double.init) ?? eatenTotals[day]?.kcal ?? 0
+            let eaten = eatenTotals[day]?.kcal ?? 0
             guard eaten > 0, let b = burned[day], b > 0 else { continue }
             days.append(DayBalance(day: day, eaten: eaten, burned: b))
         }

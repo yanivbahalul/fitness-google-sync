@@ -49,19 +49,6 @@ struct SyncOutcome {
     }
 }
 
-/// Today's calorie balance: burned (Google Health, includes resting metabolism) vs eaten
-/// (whatever food app writes to Apple Health, e.g. Cali).
-struct EnergyBalance: Equatable {
-    var burned: Int?
-    var eaten: Int
-    /// True when "eaten" was typed in by hand (e.g. copied from a food app).
-    var eatenIsManual: Bool
-    var updated: Date
-
-    /// Positive = deficit (burned more than eaten).
-    var deficit: Int? { burned.map { $0 - eaten } }
-}
-
 /// Today's highlights, computed from the data written in the last sync.
 struct TodaySummary: Codable, Equatable {
     var steps: Int?
@@ -83,7 +70,6 @@ final class SyncCoordinator: ObservableObject {
     @Published private(set) var status: [String: ItemStatus] = [:]
     @Published private(set) var history: [SyncLogEntry] = SyncHistory.load()
     @Published private(set) var today: TodaySummary?
-    @Published private(set) var energy: EnergyBalance?
 
     /// Which data types are switched on (persisted).
     @Published var enabled: Set<String> {
@@ -202,7 +188,7 @@ final class SyncCoordinator: ObservableObject {
 
         do {
             try await healthKitWriter.requestAuthorization(toShare: Set(selected.map(\.hkType)),
-                                                          read: [HKQuantityType(.stepCount), HKQuantityType(.dietaryEnergyConsumed)])
+                                                          read: [HKQuantityType(.stepCount)])
             // Refresh the access token once up front so the parallel requests share it.
             _ = try await auth.validAccessToken()
         } catch {
@@ -270,41 +256,18 @@ final class SyncCoordinator: ObservableObject {
             outcome.error = "הסנכרון נכשל. בדוק חיבור לאינטרנט, או התנתק והתחבר מחדש ל‑Google."
         }
         finish(outcome, trigger: trigger, rangeTitle: effectiveRange.title)
-        await refreshEnergy()
         return outcome
     }
 
-    /// Recomputes today's calorie balance. Burned comes from Google's total-calories
-    /// (resting + active, like the band shows); eaten from Apple Health's dietary energy,
-    /// which calorie-tracking apps such as Cali write to.
-    func refreshEnergy() async {
-        guard auth.isSignedIn else { return }
+    /// Calories burned on one day (Google total calories: resting + active, as the band
+    /// shows). Today's value is "so far".
+    func burned(on day: Date) async -> Int? {
         let calendar = Calendar.current
+        let start = calendar.startOfDay(for: day)
         let today = calendar.startOfDay(for: Date())
-        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today)!
-
-        var burned: Int?
-        if let days = try? await healthClient.dailyRollUp(dataType: "total-calories", valueKey: "totalCalories",
-                                                          from: today, to: tomorrow, chunkDays: 14),
-           let value = days.first(where: { calendar.isDate($0.day, inSameDayAs: today) })?.value {
-            burned = Int(value.rounded())
-        }
-        do {
-            try await healthKitWriter.requestAuthorization(toShare: [], read: [HKQuantityType(.dietaryEnergyConsumed)])
-        } catch {}
-        let fromHealth = (try? await healthKitWriter.todayTotal(.dietaryEnergyConsumed, unit: .kilocalorie())) ?? 0
-        if let manual = manualEatenToday {
-            energy = EnergyBalance(burned: burned, eaten: manual, eatenIsManual: true, updated: Date())
-        } else {
-            energy = EnergyBalance(burned: burned, eaten: Int(fromHealth.rounded()), eatenIsManual: false, updated: Date())
-        }
-    }
-
-    /// Calories eaten today, typed in by hand (stored per day).
-    var manualEatenToday: Int? { manualEaten(on: Date()) }
-
-    func manualEaten(on day: Date) -> Int? {
-        UserDefaults.standard.object(forKey: Self.manualEatenKey(for: day)) as? Int
+        let days = (calendar.dateComponents([.day], from: start, to: today).day ?? 0) + 1
+        guard days >= 1 else { return nil }
+        return await dailyBurned(days: days)[start].map { Int($0.rounded()) }
     }
 
     /// Total calories burned per day (resting + active) from Google Health, cached on the
@@ -331,74 +294,6 @@ final class SyncCoordinator: ObservableObject {
             }
         }
         return cache.filter { $0.key >= start }
-    }
-
-    /// Sets (or clears, with nil) today's hand-entered calories and updates the balance.
-    func setManualEatenToday(_ kcal: Int?) {
-        let key = Self.manualEatenKey(for: Date())
-        if let kcal { UserDefaults.standard.set(kcal, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) }
-        if var current = energy, let kcal {
-            current.eaten = kcal
-            current.eatenIsManual = true
-            energy = current
-        }
-        Task { await refreshEnergy() }
-    }
-
-    private static func manualEatenKey(for date: Date) -> String {
-        let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
-        return "manualEaten-\(c.year ?? 0)-\(c.month ?? 0)-\(c.day ?? 0)"
-    }
-
-    private func finish(_ outcome: SyncOutcome, trigger: SyncTrigger, rangeTitle: String) {
-        if trigger == .manual || trigger == .appOpen {
-            lastError = outcome.error
-        }
-        history = SyncHistory.append(SyncLogEntry(
-            date: Date(), trigger: trigger, rangeTitle: rangeTitle,
-            records: outcome.records, syncedTypes: outcome.syncedTypes, failedTypes: outcome.failedTypes))
-
-        // Tell the user about problems in syncs they didn't start by hand.
-        guard trigger != .manual, AppSettings.notifyProblems else { return }
-        if needsReconnect {
-            Notifier.notify(title: "HealthBridge צריך חיבור מחדש",
-                            body: "פתח את האפליקציה, התנתק והתחבר מחדש ל‑Google כדי שהסנכרון ימשיך.",
-                            id: "reconnect")
-        } else if let error = outcome.error {
-            Notifier.notify(title: "הסנכרון של HealthBridge נכשל", body: error, id: "sync-failed")
-        }
-    }
-
-    private static func addToToday(_ summary: inout TodaySummary, item: SyncItem, samples: [HKSample], now: Date) {
-        let calendar = Calendar.current
-        let startOfToday = calendar.startOfDay(for: now)
-        let todays = samples.compactMap { $0 as? HKQuantitySample }.filter { $0.startDate >= startOfToday }
-
-        switch item.hkType.identifier {
-        case HKQuantityTypeIdentifier.stepCount.rawValue:
-            summary.steps = Int(todays.reduce(0) { $0 + $1.quantity.doubleValue(for: .count()) })
-        case HKQuantityTypeIdentifier.activeEnergyBurned.rawValue:
-            summary.activeKcal = Int(todays.reduce(0) { $0 + $1.quantity.doubleValue(for: .kilocalorie()) })
-        case HKQuantityTypeIdentifier.restingHeartRate.rawValue:
-            let bpm = HKUnit.count().unitDivided(by: .minute())
-            let all = samples.compactMap { $0 as? HKQuantitySample }.sorted { $0.startDate > $1.startDate }
-            if let latest = all.first { summary.restingHeartRate = Int(latest.quantity.doubleValue(for: bpm)) }
-        case HKCategoryTypeIdentifier.sleepAnalysis.rawValue:
-            // Last night: asleep stages that ended after yesterday 18:00.
-            let cutoff = calendar.date(byAdding: .hour, value: -6, to: startOfToday)!
-            let asleep: Set<Int> = [
-                HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue,
-                HKCategoryValueSleepAnalysis.asleepCore.rawValue,
-                HKCategoryValueSleepAnalysis.asleepDeep.rawValue,
-                HKCategoryValueSleepAnalysis.asleepREM.rawValue,
-            ]
-            let seconds = samples.compactMap { $0 as? HKCategorySample }
-                .filter { asleep.contains($0.value) && $0.endDate > cutoff }
-                .reduce(0.0) { $0 + $1.endDate.timeIntervalSince($1.startDate) }
-            if seconds > 0 { summary.sleepMinutes = Int(seconds / 60) }
-        default:
-            break
-        }
     }
 
     // MARK: - Steps check

@@ -9,6 +9,7 @@ import VisionKit
 struct DraftReviewView: View {
     @Binding var drafts: [FoodDraft]
     let source: FoodEntry.Source
+    let day: Date
     let onSaved: () -> Void
     @State private var saving = false
 
@@ -31,7 +32,7 @@ struct DraftReviewView: View {
                 Button {
                     saving = true
                     Task {
-                        await FoodLog.shared.add(drafts, source: source)
+                        await FoodLog.shared.add(drafts, source: source, at: FoodLog.entryDate(for: day))
                         saving = false
                         onSaved()
                     }
@@ -118,6 +119,7 @@ private struct DraftRow: View {
 // MARK: - Photo
 
 struct PhotoAnalyzeView: View {
+    let day: Date
     @Environment(\.dismiss) private var dismiss
     @State private var showCamera = false
     @State private var pickerItem: PhotosPickerItem?
@@ -132,7 +134,7 @@ struct PhotoAnalyzeView: View {
         NavigationStack {
             Group {
                 if !drafts.isEmpty {
-                    DraftReviewView(drafts: $drafts, source: .photo) { dismiss() }
+                    DraftReviewView(drafts: $drafts, source: .photo, day: day) { dismiss() }
                 } else {
                     ScrollView {
                         VStack(spacing: 16) {
@@ -252,6 +254,7 @@ struct CameraPicker: UIViewControllerRepresentable {
 // MARK: - Text description
 
 struct TextAnalyzeView: View {
+    let day: Date
     @Environment(\.dismiss) private var dismiss
     @State private var text = ""
     @State private var drafts: [FoodDraft] = []
@@ -262,7 +265,7 @@ struct TextAnalyzeView: View {
         NavigationStack {
             Group {
                 if !drafts.isEmpty {
-                    DraftReviewView(drafts: $drafts, source: .text) { dismiss() }
+                    DraftReviewView(drafts: $drafts, source: .text, day: day) { dismiss() }
                 } else {
                     Form {
                         Section {
@@ -314,6 +317,7 @@ struct TextAnalyzeView: View {
 // MARK: - Search (Tzameret)
 
 struct FoodSearchView: View {
+    let day: Date
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
     @State private var results: [FoodItem] = []
@@ -323,7 +327,7 @@ struct FoodSearchView: View {
         NavigationStack {
             Group {
                 if !drafts.isEmpty {
-                    DraftReviewView(drafts: $drafts, source: .search) { dismiss() }
+                    DraftReviewView(drafts: $drafts, source: .search, day: day) { dismiss() }
                 } else {
                     List(results) { item in
                         Button {
@@ -370,6 +374,7 @@ struct FoodSearchView: View {
 // MARK: - Barcode
 
 struct BarcodeAddView: View {
+    let day: Date
     @Environment(\.dismiss) private var dismiss
     @State private var code: String?
     @State private var drafts: [FoodDraft] = []
@@ -380,7 +385,7 @@ struct BarcodeAddView: View {
         NavigationStack {
             Group {
                 if !drafts.isEmpty {
-                    DraftReviewView(drafts: $drafts, source: .barcode) { dismiss() }
+                    DraftReviewView(drafts: $drafts, source: .barcode, day: day) { dismiss() }
                 } else if DataScannerViewController.isSupported && DataScannerViewController.isAvailable {
                     ZStack(alignment: .bottom) {
                         BarcodeScanner { scanned in

@@ -14,26 +14,10 @@ struct SyncIntent: AppIntent {
     }
 }
 
-/// "How many calories did I eat today?" — sets today's eaten total (e.g. copied from Cali).
-struct SetEatenIntent: AppIntent {
-    static var title: LocalizedStringResource = "הזן קלוריות שנאכלו היום"
-    static var description = IntentDescription("מעדכן את סך הקלוריות שנאכלו היום במאזן הקלורי של HealthBridge.")
-    static var openAppWhenRun = false
-
-    @Parameter(title: "קלוריות", requestValueDialog: IntentDialog("כמה קלוריות נאכלו היום בסך הכול?"))
-    var calories: Int
-
-    @MainActor
-    func perform() async throws -> some IntentResult & ProvidesDialog {
-        AppState.sync.setManualEatenToday(max(0, calories))
-        return .result(dialog: IntentDialog(stringLiteral: await EnergyDialog.text(eaten: max(0, calories))))
-    }
-}
-
-/// "Add 450 calories" — adds a meal to today's eaten total.
+/// "Add 450 calories" - adds a quick entry to today's food diary.
 struct AddEatenIntent: AppIntent {
-    static var title: LocalizedStringResource = "הוסף קלוריות שנאכלו"
-    static var description = IntentDescription("מוסיף ארוחה לסך הקלוריות שנאכלו היום.")
+    static var title: LocalizedStringResource = "הוסף קלוריות ליומן"
+    static var description = IntentDescription("מוסיף הזנה מהירה של קלוריות ליומן האוכל של היום.")
     static var openAppWhenRun = false
 
     @Parameter(title: "קלוריות", requestValueDialog: IntentDialog("כמה קלוריות להוסיף?"))
@@ -41,23 +25,15 @@ struct AddEatenIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let sync = AppState.sync
-        let total = max(0, (sync.manualEatenToday ?? 0) + calories)
-        sync.setManualEatenToday(total)
-        return .result(dialog: IntentDialog(stringLiteral: await EnergyDialog.text(eaten: total)))
-    }
-}
-
-@MainActor
-enum EnergyDialog {
-    /// Spoken reply: eaten total plus today's deficit when Google's burned value is known.
-    static func text(eaten: Int) async -> String {
-        await AppState.sync.refreshEnergy()
-        var text = "עודכן: \(eaten) קלוריות נאכלו היום."
-        if let deficit = AppState.sync.energy?.deficit {
-            text += deficit >= 0 ? " גרעון של \(deficit) קלוריות עד עכשיו." : " עודף של \(-deficit) קלוריות עד עכשיו."
+        let food = FoodLog.shared
+        await food.addQuick(kcal: Double(max(0, calories)))
+        let eaten = Int(food.total(on: Date()))
+        var text = "נוסף. נאכלו היום \(eaten) קלוריות."
+        if let burned = await AppState.sync.burned(on: Date()) {
+            let deficit = burned - eaten
+            text += deficit >= 0 ? " גרעון של \(deficit) עד עכשיו." : " עודף של \(-deficit) עד עכשיו."
         }
-        return text
+        return .result(dialog: IntentDialog(stringLiteral: text))
     }
 }
 
@@ -71,18 +47,12 @@ struct StepsBridgeShortcuts: AppShortcutsProvider {
             ]
         )
         AppShortcut(
-            intent: SetEatenIntent(),
-            phrases: [
-                "הזן קלוריות ב\(.applicationName)",
-                "עדכן קלוריות ב\(.applicationName)",
-                "Log calories in \(.applicationName)",
-            ]
-        )
-        AppShortcut(
             intent: AddEatenIntent(),
             phrases: [
                 "הוסף קלוריות ב\(.applicationName)",
+                "הזן קלוריות ב\(.applicationName)",
                 "Add calories in \(.applicationName)",
+                "Log calories in \(.applicationName)",
             ]
         )
     }
