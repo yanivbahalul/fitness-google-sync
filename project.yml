@@ -38,4 +38,4 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.yanivbahalul.stepsbridge
-        GOOGLE_OAUTH_REDIRECT_SCHEME: com.yanivbahalul.stepsbridge
+        GOOGLE_OAUTH_REDIRECT_SCHEME: com.googleusercontent.apps.84175655883-g6tnujthm7282dthp53sbljc4udstrqm

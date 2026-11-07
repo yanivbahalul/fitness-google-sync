@@ -47,18 +47,15 @@ retired Fitbit Web API) — see <https://developers.google.com/health/about>.
 
 ## 2. Configure the app
 
-```
-cp Sources/Config/Secrets.example.plist Sources/Config/Secrets.plist
-```
+Nothing to do: the app has this project's iOS OAuth client built in
+(`Sources/Config/AppConfig.swift`), with the redirect URI
+`com.googleusercontent.apps.84175655883-g6tnujthm7282dthp53sbljc4udstrqm:/oauth2redirect`
+(the reversed client ID, which is the scheme Google expects for iOS clients). An iOS client
+ID isn't a secret: it ships inside every app binary.
 
-Edit `Sources/Config/Secrets.plist` and fill in:
-- `GoogleOAuthClientID` — the Client ID from step 1.5
-- `GoogleOAuthClientSecret` — the Client secret from step 1.5, or leave it as
-  `YOUR_CLIENT_SECRET` / empty if you made an iOS-type client
-- `GoogleOAuthRedirectURI` — leave as `com.yanivbahalul.stepsbridge:/oauth2redirect`
-  unless you changed the bundle ID in `project.yml`, in which case match it there too.
-
-`Secrets.plist` is gitignored — it will never be committed.
+To use a different OAuth client, copy `Sources/Config/Secrets.example.plist` to
+`Sources/Config/Secrets.plist` (gitignored), fill in your values, and set
+`GOOGLE_OAUTH_REDIRECT_SCHEME` in `project.yml` to the redirect URI's scheme.
 
 ## 3. Generate the Xcode project and build
 
