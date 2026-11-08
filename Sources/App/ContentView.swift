@@ -55,7 +55,6 @@ private struct SyncPage: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                HeaderCard()
                 if auth.isSignedIn {
                     SyncCard()
                     ForEach(SyncCategory.allCases) { category in
@@ -151,55 +150,6 @@ struct Notice: View {
     }
 }
 
-// MARK: - Header
-
-private struct HeaderCard: View {
-    @EnvironmentObject private var auth: GoogleAuthManager
-
-    var body: some View {
-        HStack(spacing: 14) {
-            Image("Logo")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 64, height: 64)
-                .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
-                .shadow(color: .black.opacity(0.12), radius: 6, y: 3)
-                .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("HealthBridge")
-                    .font(.title2.bold())
-                HStack(spacing: 6) {
-                    Text("Google Health")
-                    Image(systemName: "arrow.left").accessibilityHidden(true)
-                    Text("Apple Health")
-                }
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("מעביר נתונים מ‑Google Health אל Apple Health")
-                StatusPill(connected: auth.isSignedIn)
-                    .padding(.top, 2)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.vertical, 4)
-    }
-}
-
-private struct StatusPill: View {
-    let connected: Bool
-
-    var body: some View {
-        Label(connected ? "מחובר ל‑Google" : "לא מחובר", systemImage: connected ? "checkmark.circle.fill" : "xmark.circle.fill")
-            .font(.caption.weight(.semibold))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .foregroundStyle(connected ? .green : .secondary)
-            .background((connected ? Color.green : Color.gray).opacity(0.15), in: Capsule())
-    }
-}
-
 // MARK: - Connect
 
 private struct ConnectCard: View {
@@ -248,10 +198,13 @@ private struct SyncCard: View {
                         Text("\(sync.enabledCount) סוגי נתונים · \(sync.range.title)")
                             .font(.subheadline)
                             .opacity(0.9)
+                        Label("מחובר ל‑Google", systemImage: "checkmark.circle.fill")
+                            .font(.caption.weight(.semibold))
+                            .opacity(0.9)
                     }
                 }
                 .foregroundStyle(.white)
-                .frame(maxWidth: .infinity, minHeight: 88)
+                .frame(maxWidth: .infinity, minHeight: 100)
                 .background(Theme.blue, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
                 .opacity(sync.enabledCount == 0 ? 0.5 : 1)
             }
