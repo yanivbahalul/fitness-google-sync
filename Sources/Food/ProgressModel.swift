@@ -16,9 +16,14 @@ final class ProgressModel: ObservableObject {
         let day: Date
         let eaten: Double
         let burned: Double
-        var deficit: Double { burned - eaten }
+        /// False when no food was logged that day; such days count as balanced
+        /// (ate what was burned: deficit 0) so they don't distort totals or averages.
+        var logged = true
+        var deficit: Double { logged ? burned - eaten : 0 }
         var id: Date { day }
     }
+
+    var loggedDays: Int { balances.filter(\.logged).count }
 
     struct ComparePoint: Identifiable {
         let day: Date
@@ -142,8 +147,13 @@ final class ProgressModel: ObservableObject {
             let day = calendar.date(byAdding: .day, value: offset, to: start)!
             guard day < today, day >= foodStart else { continue }  // today is incomplete
             let eaten = eatenTotals[day]?.kcal ?? 0
-            guard eaten > 0, let b = burned[day], b > 0 else { continue }
-            days.append(DayBalance(day: day, eaten: eaten, burned: b))
+            if eaten > 0, let b = burned[day], b > 0 {
+                days.append(DayBalance(day: day, eaten: eaten, burned: b))
+            } else {
+                // Not logged (or no burn data): neutral day, deficit 0.
+                let b = burned[day] ?? 0
+                days.append(DayBalance(day: day, eaten: b, burned: b, logged: false))
+            }
         }
         balances = days
 

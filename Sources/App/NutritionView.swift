@@ -376,22 +376,32 @@ private struct BalanceCard: View {
 
     var body: some View {
         let days = progress.balances
-        let good = days.filter { $0.deficit > 0 }.count
+        let logged = days.filter(\.logged)
+        let unlogged = days.count - logged.count
+        let good = logged.filter { $0.deficit > 0 }.count
         Card {
             CardHeader(title: "אכלתי מול שרפתי", symbol: "flame.fill")
             if days.isEmpty {
                 Headline(text: "עוד אין מספיק נתונים")
             } else {
-                Headline(text: "ב‑\(good) מתוך \(days.count) ימים אכלת פחות ממה ששרפת",
-                         detail: progress.averageDeficit.map { avg in
-                             avg >= 0 ? "בממוצע אכלת \(Int(safe: avg).formatted()) קלוריות פחות ממה ששרפת ביום."
-                                      : "בממוצע אכלת \(Int(safe: -avg).formatted()) קלוריות יותר ממה ששרפת ביום."
-                         })
+                Headline(text: "ב‑\(good) מתוך \(logged.count) ימים שנרשמו אכלת פחות ממה ששרפת",
+                         detail: [progress.averageDeficit.map { avg in
+                                     avg >= 0 ? "גרעון ממוצע של \(Int(safe: avg).formatted()) קלוריות ביום."
+                                              : "עודף ממוצע של \(Int(safe: -avg).formatted()) קלוריות ביום."
+                                  },
+                                  unlogged > 0 ? "\(unlogged) ימים בלי רישום נספרו כמאוזנים (0)." : nil]
+                             .compactMap { $0 }.joined(separator: " "))
                 Chart {
                     ForEach(days) { b in
-                        BarMark(x: .value("יום", b.day, unit: .day), y: .value("הפרש", b.deficit))
-                            .foregroundStyle(b.deficit >= 0 ? ChartColors.blue : ChartColors.orange)
-                            .cornerRadius(3)
+                        if b.logged {
+                            BarMark(x: .value("יום", b.day, unit: .day), y: .value("הפרש", b.deficit))
+                                .foregroundStyle(b.deficit >= 0 ? ChartColors.blue : ChartColors.orange)
+                                .cornerRadius(3)
+                        } else {
+                            PointMark(x: .value("יום", b.day, unit: .day), y: .value("הפרש", 0))
+                                .symbolSize(18)
+                                .foregroundStyle(ChartColors.reference.opacity(0.6))
+                        }
                     }
                     RuleMark(y: .value("אפס", 0)).foregroundStyle(Color.secondary.opacity(0.6))
                     if let selected {
@@ -399,7 +409,9 @@ private struct BalanceCard: View {
                             .foregroundStyle(Color.secondary.opacity(0.3))
                             .annotation(position: .top) {
                                 ValueBubble(title: shortDate(selected.day),
-                                        value: "שרפת \(Int(safe: selected.burned)) · אכלת \(Int(safe: selected.eaten))")
+                                            value: selected.logged
+                                                ? "שרפת \(Int(safe: selected.burned)) · אכלת \(Int(safe: selected.eaten))"
+                                                : "לא נרשם אוכל (נספר כ‑0)")
                             }
                     }
                 }
@@ -426,11 +438,14 @@ private struct BalanceCard: View {
                 }
                 .accessibilityElement()
                 .accessibilityLabel("גרף אכלתי מול שרפתי")
-                .accessibilityValue("ב‑\(good) מתוך \(days.count) ימים אכלת פחות ממה ששרפת")
+                .accessibilityValue("ב‑\(good) מתוך \(logged.count) ימים שנרשמו אכלת פחות ממה ששרפת")
 
                 HStack(spacing: 14) {
                     LegendItem(color: ChartColors.blue, text: "מעל הקו: אכלת פחות (טוב לירידה)")
                     LegendItem(color: ChartColors.orange, text: "מתחת: אכלת יותר")
+                }
+                if unlogged > 0 {
+                    LegendItem(color: ChartColors.reference.opacity(0.6), text: "נקודה אפורה: יום בלי רישום (0)")
                 }
             }
         }
@@ -446,8 +461,8 @@ private struct ExpectedVsActualCard: View {
         if expected.count < 2 {
             Card {
                 CardHeader(title: "צפוי מול בפועל", symbol: "scope")
-                Headline(text: "יוצג אחרי \(ProgressModel.minDaysForComparison) ימים מלאים של רישום",
-                         detail: "עד עכשיו: \(progress.balances.count) ימים. בטווח קצר יותר, תנודות של מים במשקל גדולות מהשינוי האמיתי.")
+                Headline(text: "יוצג אחרי \(ProgressModel.minDaysForComparison) ימים מתחילת המעקב",
+                         detail: "עד עכשיו: \(progress.balances.count) ימים מלאים. בטווח קצר יותר, תנודות של מים במשקל גדולות מהשינוי האמיתי.")
             }
         } else if let exp = expected.last, let act = actual.last {
             Card {
