@@ -16,20 +16,16 @@
 
 </div>
 
-<!--
-SCREENSHOTS - add the files to docs/screenshots/ and uncomment:
-
 <p align="center">
-  <img src="docs/screenshots/sync.png"      width="230" alt="Sync screen">
-  <img src="docs/screenshots/nutrition.png" width="230" alt="Nutrition screen">
-  <img src="docs/screenshots/progress.png"  width="230" alt="Weight progress">
+  <img src="docs/screenshots/sync.png"     width="200" alt="Sync screen">
+  <img src="docs/screenshots/progress.png" width="200" alt="Weight progress">
+  <img src="docs/screenshots/balance.png"  width="200" alt="Eaten vs burned">
 </p>
 <p align="center">
-  <img src="docs/screenshots/meal-photo.png"  width="230" alt="Meal from a photo">
-  <img src="docs/screenshots/balance.png"     width="230" alt="Eaten vs burned">
-  <img src="docs/screenshots/steps-check.png" width="230" alt="Steps check">
+  <img src="docs/screenshots/meal-photo.png"  width="200" alt="Meal recognized from a photo">
+  <img src="docs/screenshots/meal-total.png"  width="200" alt="Meal review before saving">
+  <img src="docs/screenshots/steps-check.png" width="200" alt="Steps check against Google">
 </p>
--->
 
 ## Why
 
