@@ -72,7 +72,7 @@ struct Card<Content: View>: View {
 /// The one icon style: accent symbol on a faint accent tile.
 struct SoftIcon: View {
     let symbol: String
-    @ScaledMetric(relativeTo: .body) private var size: CGFloat
+    @ScaledMetric(relativeTo: .body) private var size: CGFloat = 32
 
     init(symbol: String, size: CGFloat = 32) {
         self.symbol = symbol
