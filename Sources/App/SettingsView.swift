@@ -102,7 +102,7 @@ struct SettingsView: View {
                     }
                     .onChange(of: expiryReminder) { on in Notifier.scheduleExpiryReminders(enabled: on) }
                     if let expiry {
-                        LabeledContent("האפליקציה בתוקף עד", value: expiry.formatted(date: .abbreviated, time: .shortened))
+                        LabeledContent("האפליקציה בתוקף עד", value: expiry.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, locale: .he)))
                     }
                 } header: {
                     Text("התראות")
@@ -188,7 +188,7 @@ struct HistoryView: View {
                                       color: entry.failedTypes.isEmpty ? .green : (entry.syncedTypes == 0 ? .red : .orange),
                                       size: 32)
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(entry.date.formatted(date: .abbreviated, time: .shortened))
+                                Text(entry.date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, locale: .he)))
                                     .font(.body.weight(.semibold))
                                 Text("\(entry.trigger.title) · \(entry.rangeTitle) · \(entry.syncedTypes) סוגים · \(entry.records) רשומות")
                                     .font(.caption)
@@ -234,7 +234,7 @@ struct StepsCheckView: View {
                     ForEach(rows) { row in
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
-                                Text(row.day.formatted(.dateTime.weekday(.wide).day().month()))
+                                Text(row.day.formatted(.dateTime.weekday(.wide).day().month().locale(.he)))
                                     .font(.body.weight(.semibold))
                                 Spacer()
                                 Image(systemName: row.matches ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")

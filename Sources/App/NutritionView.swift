@@ -51,7 +51,7 @@ private struct DayNavigator: View {
     private var title: String {
         if isToday { return "היום" }
         if calendar.isDateInYesterday(day) { return "אתמול" }
-        return day.formatted(.dateTime.weekday(.wide).day().month())
+        return day.formatted(.dateTime.weekday(.wide).day().month().locale(.he))
     }
 
     var body: some View {
@@ -115,7 +115,7 @@ private struct AddFoodCard: View {
 
     var body: some View {
         Card {
-            Label(Calendar.current.isDateInToday(day) ? "הוסף אוכל" : "הוסף אוכל ל‑\(day.formatted(.dateTime.day().month()))",
+            Label(Calendar.current.isDateInToday(day) ? "הוסף אוכל" : "הוסף אוכל ל‑\(day.formatted(.dateTime.day().month().locale(.he)))",
                   systemImage: "plus.circle.fill")
                 .font(.headline)
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
@@ -143,7 +143,7 @@ private struct AddFoodCard: View {
             }
             Button("ביטול", role: .cancel) {}
         } message: {
-            Text(Calendar.current.isDateInToday(day) ? "כמה קלוריות להוסיף ליומן של היום?" : "כמה קלוריות להוסיף ליומן של \(day.formatted(date: .abbreviated, time: .omitted))?")
+            Text(Calendar.current.isDateInToday(day) ? "כמה קלוריות להוסיף ליומן של היום?" : "כמה קלוריות להוסיף ליומן של \(day.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted, locale: .he)))?")
         }
     }
 }
@@ -205,7 +205,7 @@ private struct DiaryCard: View {
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(entry.name).font(.subheadline).lineLimit(2)
-                            Text([entry.date.formatted(date: .omitted, time: .shortened),
+                            Text([entry.date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: .he)),
                                   entry.grams.map { "\(Int(safe: $0)) ג׳" }].compactMap { $0 }.joined(separator: " · "))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -241,7 +241,7 @@ private func kg(_ v: Double, sign: Bool = false) -> String {
 }
 
 private func shortDate(_ d: Date) -> String {
-    d.formatted(.dateTime.day().month(.wide))
+    d.formatted(.dateTime.day().month(.wide).locale(.he))
 }
 
 private struct ProgressSection: View {
@@ -376,10 +376,12 @@ private struct WeightCard: View {
                 }
                 .chartXAxis {
                     AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                        AxisValueLabel(format: .dateTime.day().month(.abbreviated)).font(.caption)
+                        AxisValueLabel(format: .dateTime.day().month(.abbreviated).locale(.he)).font(.caption)
                     }
                 }
                 .frame(height: 220)
+                // Time runs left to right like any chart, even in the right-to-left UI.
+                .environment(\.layoutDirection, .leftToRight)
                 .chartOverlay { proxy in
                     SelectionOverlay(proxy: proxy) { date in
                         selected = progress.weights.min { abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date)) }
@@ -407,7 +409,7 @@ private struct WeightCard: View {
             if goalWeight > 0, let current = progress.currentWeight {
                 if let weeks = progress.weeksToGoal(goalWeight) {
                     let date = Calendar.current.date(byAdding: .day, value: Int(safe: weeks * 7), to: Date()) ?? Date()
-                    Text("נשארו \(kg(current - goalWeight)). בקצב הנוכחי תגיע ליעד בערך ב‑\(date.formatted(.dateTime.month(.wide).year())).")
+                    Text("נשארו \(kg(current - goalWeight)). בקצב הנוכחי תגיע ליעד בערך ב‑\(date.formatted(.dateTime.month(.wide).year().locale(.he))).")
                         .font(.subheadline)
                 } else if current > goalWeight {
                     Text("נשארו \(kg(current - goalWeight)) ליעד.")
@@ -521,10 +523,12 @@ private struct BalanceCard: View {
                 }
                 .chartXAxis {
                     AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                        AxisValueLabel(format: .dateTime.day().month(.abbreviated)).font(.caption)
+                        AxisValueLabel(format: .dateTime.day().month(.abbreviated).locale(.he)).font(.caption)
                     }
                 }
                 .frame(height: 200)
+                // Time runs left to right like any chart, even in the right-to-left UI.
+                .environment(\.layoutDirection, .leftToRight)
                 .chartOverlay { proxy in
                     SelectionOverlay(proxy: proxy) { date in
                         selected = days.min { abs($0.day.timeIntervalSince(date)) < abs($1.day.timeIntervalSince(date)) }
@@ -573,10 +577,12 @@ private struct ExpectedVsActualCard: View {
                 }
                 .chartXAxis {
                     AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                        AxisValueLabel(format: .dateTime.day().month(.abbreviated)).font(.caption)
+                        AxisValueLabel(format: .dateTime.day().month(.abbreviated).locale(.he)).font(.caption)
                     }
                 }
                 .frame(height: 180)
+                // Time runs left to right like any chart, even in the right-to-left UI.
+                .environment(\.layoutDirection, .leftToRight)
                 .accessibilityElement()
                 .accessibilityLabel("שינוי משקל צפוי מול בפועל")
                 HStack(spacing: 14) {

@@ -45,6 +45,7 @@ struct ContentView: View {
             .sheet(isPresented: $showHistory) { HistoryView() }
         }
         .environment(\.layoutDirection, .rightToLeft)
+        .environment(\.locale, .he)
     }
 }
 
@@ -215,7 +216,7 @@ private struct SyncCard: View {
             HStack {
                 if let date = sync.lastSyncDate {
                     Label {
-                        Text("הושלם: \(date.formatted(date: .abbreviated, time: .shortened))")
+                        Text("הושלם: \(date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, locale: .he)))")
                     } icon: {
                         Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
                     }

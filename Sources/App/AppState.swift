@@ -60,3 +60,8 @@ enum BackgroundSync {
         try? BGTaskScheduler.shared.submit(request)
     }
 }
+
+extension Locale {
+    /// Hebrew formatting for dates in the UI, regardless of the phone's region settings.
+    static let he = Locale(identifier: "he_IL")
+}
