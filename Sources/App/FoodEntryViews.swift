@@ -19,8 +19,6 @@ struct DraftReviewView: View {
                 ForEach($drafts) { $draft in
                     DraftRow(draft: $draft)
                 }
-            } footer: {
-                Text("הקלוריות מחושבות לפי מאגר צמרת של משרד הבריאות. אם אין התאמה, משתמשים בהערכה. אפשר לשנות התאמה וכמות.")
             }
             Section {
                 let total = drafts.filter(\.include).map(\.kcal).reduce(0, +)
@@ -150,10 +148,6 @@ struct PhotoAnalyzeView: View {
                                     .font(.system(size: 56))
                                     .foregroundStyle(.secondary)
                                     .padding(.top, 24)
-                                Text("צלם את הצלחת מלמעלה, באור טוב, כשכל המאכלים נראים.")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                    .multilineTextAlignment(.center)
                             }
                             HStack {
                                 if UIImagePickerController.isSourceTypeAvailable(.camera) {
@@ -181,9 +175,6 @@ struct PhotoAnalyzeView: View {
                                 }
                                 .buttonStyle(.borderedProminent)
                                 .disabled(analyzing)
-                                if analyzing {
-                                    Text("בדרך כלל 5–15 שניות.").font(.caption).foregroundStyle(.secondary)
-                                }
                             }
                             if let error { Notice(symbol: "exclamationmark.triangle.fill", color: .red, text: error) }
                         }
@@ -273,8 +264,6 @@ struct TextAnalyzeView: View {
                                 .frame(minHeight: 120)
                         } header: {
                             Text("מה אכלת?")
-                        } footer: {
-                            Text("למשל: \"2 פרוסות לחם מלא עם חומוס, ביצה קשה וסלט ירקות קטן\"")
                         }
                         Section {
                             Button {

@@ -319,10 +319,10 @@ private struct WeightCard: View {
 
     private var headline: (String, String?) {
         guard let change = progress.change, let first = progress.weights.first else {
-            return ("עדיין אין שקילות בתקופה הזו", "שקילות מגיעות מהסנכרון עם Google.")
+            return ("עדיין אין שקילות בתקופה הזו", nil)
         }
         let since = "מאז \(shortDate(first.date))"
-        if change <= -0.1 { return ("ירדת \(kg(change)) \(since) 🎉", nil) }
+        if change <= -0.1 { return ("ירדת \(kg(change)) \(since)", nil) }
         if change >= 0.1 { return ("עלית \(kg(change)) \(since)", nil) }
         return ("המשקל יציב \(since)", nil)
     }
@@ -394,9 +394,6 @@ private struct WeightCard: View {
                     LegendItem(color: ChartColors.blue.opacity(0.35), text: "שקילה")
                     if goalWeight > 0 { LegendItem(color: .green, text: "יעד", dashed: true) }
                 }
-                Text("הקו מראה את המגמה (ממוצע של השבוע), כדי שתנודות יומיות לא יבלבלו. לחץ על הגרף לראות שקילה.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             Divider()
@@ -416,7 +413,7 @@ private struct WeightCard: View {
                     Text("נשארו \(kg(current - goalWeight)) ליעד.")
                         .font(.subheadline)
                 } else {
-                    Text("הגעת ליעד! 🎉").font(.subheadline.weight(.semibold))
+                    Text("הגעת ליעד").font(.subheadline.weight(.semibold))
                 }
             }
         }
@@ -491,8 +488,7 @@ private struct BalanceCard: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
             if days.isEmpty {
-                Headline(text: "עוד אין מספיק נתונים",
-                         detail: "צריך ימים עם אוכל ביומן ונתון שריפה מהצמיד (Google שומר עד כ‑90 יום אחורה).")
+                Headline(text: "עוד אין מספיק נתונים")
             } else {
                 Headline(text: "ב‑\(good) מתוך \(days.count) ימים אכלת פחות ממה ששרפת",
                          detail: progress.averageDeficit.map { avg in
@@ -542,9 +538,6 @@ private struct BalanceCard: View {
                     LegendItem(color: ChartColors.blue, text: "מעל הקו: אכלת פחות (טוב לירידה)")
                     LegendItem(color: ChartColors.orange, text: "מתחת: אכלת יותר")
                 }
-                Text("כל עמודה היא יום. לחץ על עמודה כדי לראות כמה אכלת וכמה שרפת.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -561,8 +554,7 @@ private struct ExpectedVsActualCard: View {
                 Label("צפוי מול בפועל", systemImage: "scope")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
-                Headline(text: "לפי מה שאכלת היית אמור \(exp.kg <= 0 ? "לרדת" : "לעלות") \(kg(exp.kg)). בפועל \(act.kg <= 0 ? "ירדת" : "עלית") \(kg(act.kg)).",
-                         detail: explanation(expected: exp.kg, actual: act.kg))
+                Headline(text: "לפי מה שאכלת היית אמור \(exp.kg <= 0 ? "לרדת" : "לעלות") \(kg(exp.kg)). בפועל \(act.kg <= 0 ? "ירדת" : "עלית") \(kg(act.kg)).")
                 Chart(progress.comparison) { p in
                     LineMark(x: .value("תאריך", p.day), y: .value("שינוי", p.kg))
                         .foregroundStyle(by: .value("סדרה", p.series))
@@ -593,13 +585,6 @@ private struct ExpectedVsActualCard: View {
                 }
             }
         }
-    }
-
-    private func explanation(expected: Double, actual: Double) -> String {
-        let gap = actual - expected
-        if abs(gap) < 0.8 { return "זה מתאים יפה: היומן משקף טוב את מה שקורה. 👍" }
-        if gap > 0 { return "ירדת פחות מהצפוי. אולי חלק מהאוכל לא נרשם, או שהצמיד מעריך שריפה גבוהה מדי." }
-        return "ירדת יותר מהצפוי. אולי נרשם יותר אוכל ממה שנאכל בפועל, או שהגוף איבד גם מים."
     }
 }
 

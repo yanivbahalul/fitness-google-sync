@@ -26,8 +26,6 @@ struct SettingsView: View {
                     } label: {
                         SettingLabel("בדיקת צעדים מול Google", symbol: "checkmark.shield.fill", color: .green)
                     }
-                } footer: {
-                    Text("משווה לכל יום את הסך של Google Health מול מה ש‑HealthBridge כתב ומול מה ש‑Apple Health מציג.")
                 }
 
                 Section {
@@ -50,8 +48,6 @@ struct SettingsView: View {
                     }
                 } header: {
                     Text("ניתוח ארוחות (Claude)")
-                } footer: {
-                    Text("צילום או תיאור של ארוחה נשלח ל‑Claude לזיהוי. המפתח נשמר רק ב‑Keychain של האייפון. עלות משוערת לצילום: Opus כ‑6 אגורות, Sonnet כ‑3, Haiku פחות מאגורה. מומלץ להגדיר תקרת הוצאה בחשבון Anthropic.")
                 }
 
                 Section {
@@ -66,8 +62,6 @@ struct SettingsView: View {
                     }
                 } header: {
                     Text("מאזן קלורי")
-                } footer: {
-                    Text("גרעון של כ‑500 קק\"ל ביום הוא בערך חצי קילו בשבוע. הקלוריות שנאכלו נקראות מ‑Apple Health (למשל מ‑Cali), והקלוריות שנשרפו מ‑Google Health.")
                 }
 
                 Section {
@@ -80,14 +74,12 @@ struct SettingsView: View {
                     .onChange(of: backgroundSync) { _ in BackgroundSync.schedule() }
                 } header: {
                     Text("סנכרון אוטומטי")
-                } footer: {
-                    Text("סנכרון ברקע הוא \"כמיטב היכולת\": iOS מחליט מתי להריץ אותו, בדרך כלל כמה פעמים ביום. הדרך האמינה ביותר לסנכרון יומי היא אוטומציה בקיצורים (למטה).")
                 }
 
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
                         SettingLabel("סנכרון יומי בשעה קבועה", symbol: "square.stack.3d.up.fill", color: .pink)
-                        Text("בקיצורים ← אוטומציה ← + ← שעה ביום (למשל 08:00) ← הפעל מיד ← הוסף את הפעולה \"סנכרן את HealthBridge\".")
+                        Text("קיצורים ← אוטומציה ← שעה ביום ← \"סנכרן את HealthBridge\"")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
@@ -114,8 +106,6 @@ struct SettingsView: View {
                     }
                 } header: {
                     Text("התראות")
-                } footer: {
-                    Text("עם Apple ID חינמי האפליקציה פגה 7 ימים אחרי ההתקנה. תקבל התראה יום לפני, ואז מחברים את האייפון ל‑Mac ולוחצים ▶️ ב‑Xcode.")
                 }
 
                 Section {
@@ -263,9 +253,7 @@ struct StepsCheckView: View {
                 }
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Google = הסך היומי שמופיע באפליקציית Google Health. HealthBridge = מה שהאפליקציה כתבה. Apple Health = מה שמוצג באפליקציית בריאות.")
-                    Text("אם HealthBridge תואם ל‑Google אבל Apple Health שונה, Apple מערבב צעדים מהאייפון: בריאות ← צעדים ← מקורות נתונים וגישה ← עריכה ← גרור את HealthBridge לראש הרשימה.")
-                    Text("אם היום לא תואם, סנכרן קודם (הצעדים של היום מתעדכנים כל הזמן).")
+                    Text("אם רק Apple Health שונה: בריאות ← צעדים ← מקורות נתונים ← העבר את HealthBridge לראש הרשימה.")
                 }
             }
 

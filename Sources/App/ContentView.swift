@@ -241,12 +241,6 @@ private struct SyncCard: View {
                 .disabled(sync.isSyncing)
             }
 
-            Text(sync.range == .automatic
-                 ? "אוטומטי: משלים כל סוג נתונים מאז הסנכרון האחרון שלו (אתמול והיום כשמסנכרנים כל יום, עד 14 יום)."
-                 : "מסנכרן מחדש את \(sync.range.title) האחרונים, בלי כפילויות.")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-
             if sync.needsReconnect {
                 Notice(symbol: "key.fill", color: .orange,
                        text: "חסרה הרשאה לחלק מהנתונים. בהגדרות: התנתק, התחבר מחדש ואשר את כל ההרשאות.")
@@ -301,7 +295,7 @@ struct EnergyCard: View {
                     ProgressView(value: Double(max(0, min(deficit, goal))), total: Double(max(goal, 1)))
                         .tint(reached ? .green : Theme.blue)
                     Text(reached
-                         ? "הגעת ליעד הגרעון היומי (\(goal.formatted()) קק\"ל) 🎉"
+                         ? "הגעת ליעד הגרעון היומי (\(goal.formatted()) קק\"ל)"
                          : "יעד: \(goal.formatted()) קק\"ל גרעון · נשארו \(max(0, goal - deficit).formatted())")
                         .font(.caption)
                         .foregroundStyle(.secondary)
