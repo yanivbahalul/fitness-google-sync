@@ -257,3 +257,34 @@ struct PrimaryButton: View {
         .buttonBorderShape(.roundedRectangle(radius: 14))
     }
 }
+
+/// Date axis for daily charts: always at least a week wide and labelled on whole days,
+/// so a chart with one or two days of data doesn't repeat the same date.
+struct DailyDateAxis: ViewModifier {
+    let dates: [Date]
+    var minDays = 7
+
+    func body(content: Content) -> some View {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let lo = calendar.startOfDay(for: dates.min() ?? today)
+        var hi = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: dates.max() ?? today))!
+        if let minEnd = calendar.date(byAdding: .day, value: minDays, to: lo), hi < minEnd { hi = minEnd }
+        let spanDays = max(1, calendar.dateComponents([.day], from: lo, to: hi).day ?? 1)
+        let step = max(1, Int((Double(spanDays) / 4).rounded(.up)))
+        return content
+            .chartXScale(domain: lo...hi)
+            .chartXAxis {
+                AxisMarks(values: .stride(by: .day, count: step)) { _ in
+                    AxisValueLabel(format: .dateTime.day().month(.abbreviated).locale(.he), centered: false)
+                        .font(.caption)
+                }
+            }
+    }
+}
+
+extension View {
+    func dailyDateAxis(_ dates: [Date], minDays: Int = 7) -> some View {
+        modifier(DailyDateAxis(dates: dates, minDays: minDays))
+    }
+}

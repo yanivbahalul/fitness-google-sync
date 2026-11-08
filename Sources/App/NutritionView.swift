@@ -322,11 +322,7 @@ private struct WeightCard: View {
                         }
                     }
                 }
-                .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                        AxisValueLabel(format: .dateTime.day().month(.abbreviated).locale(.he)).font(.caption)
-                    }
-                }
+                .dailyDateAxis(progress.weights.map(\.date))
                 .frame(height: 220)
                 // Time runs left to right like any chart, even in the right-to-left UI.
                 .environment(\.layoutDirection, .leftToRight)
@@ -381,8 +377,9 @@ private struct BalanceCard: View {
         let good = logged.filter { $0.deficit > 0 }.count
         Card {
             CardHeader(title: "אכלתי מול שרפתי", symbol: "flame.fill")
-            if days.isEmpty {
-                Headline(text: "עוד אין מספיק נתונים")
+            if days.count < ProgressModel.minDaysForComparison {
+                Headline(text: "יוצג אחרי \(ProgressModel.minDaysForComparison) ימים מתחילת המעקב",
+                         detail: "עד עכשיו: \(days.count) ימים מלאים, מתוכם \(logged.count) עם רישום אוכל.")
             } else {
                 Headline(text: "ב‑\(good) מתוך \(logged.count) ימים שנרשמו אכלת פחות ממה ששרפת",
                          detail: [progress.averageDeficit.map { avg in
@@ -423,11 +420,7 @@ private struct BalanceCard: View {
                         }
                     }
                 }
-                .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                        AxisValueLabel(format: .dateTime.day().month(.abbreviated).locale(.he)).font(.caption)
-                    }
-                }
+                .dailyDateAxis(days.map(\.day))
                 .frame(height: 200)
                 // Time runs left to right like any chart, even in the right-to-left UI.
                 .environment(\.layoutDirection, .leftToRight)
@@ -485,11 +478,7 @@ private struct ExpectedVsActualCard: View {
                         }
                     }
                 }
-                .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                        AxisValueLabel(format: .dateTime.day().month(.abbreviated).locale(.he)).font(.caption)
-                    }
-                }
+                .dailyDateAxis(progress.comparison.map(\.day))
                 .frame(height: 180)
                 // Time runs left to right like any chart, even in the right-to-left UI.
                 .environment(\.layoutDirection, .leftToRight)

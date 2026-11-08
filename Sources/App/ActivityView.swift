@@ -265,11 +265,7 @@ private struct StepsTrendCard: View {
                         }
                     }
                 }
-                .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                        AxisValueLabel(format: .dateTime.day().month(.abbreviated).locale(.he)).font(.caption)
-                    }
-                }
+                .dailyDateAxis(model.steps.map(\.day))
                 .frame(height: 200)
                 .environment(\.layoutDirection, .leftToRight)
                 .chartOverlay { proxy in
@@ -325,11 +321,7 @@ private struct SleepCard: View {
                         }
                     }
                 }
-                .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                        AxisValueLabel(format: .dateTime.day().month(.abbreviated).locale(.he)).font(.caption)
-                    }
-                }
+                .dailyDateAxis(model.sleepHours.map(\.day))
                 .chartYAxisLabel("שעות")
                 .frame(height: 170)
                 .environment(\.layoutDirection, .leftToRight)
@@ -376,11 +368,7 @@ private struct HeartCard: View {
                         }
                     }
                 }
-                .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                        AxisValueLabel(format: .dateTime.day().month(.abbreviated).locale(.he)).font(.caption)
-                    }
-                }
+                .dailyDateAxis(model.restingHR.map(\.day))
                 .frame(height: 140)
                 .environment(\.layoutDirection, .leftToRight)
                 .accessibilityElement()
