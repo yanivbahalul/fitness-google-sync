@@ -133,31 +133,34 @@ Everything logged is also written to Apple Health (energy, protein, carbs, fat).
 
 ## How it works
 
+Two independent flows, both running only on the iPhone (there is no server).
+
+**1. Sync: band → Google → HealthBridge → Apple Health**
+
 ```mermaid
 flowchart LR
-    subgraph Phone["iPhone"]
-        App["HealthBridge"]
-        KC[("Keychain<br/>Google token, Claude key")]
-        HK[("Apple Health")]
-        DB[("Tzameret DB<br/>(bundled)")]
-    end
-    subgraph Google["Google"]
-        OAuth["OAuth 2.0 + PKCE"]
-        GH["Google Health API v4"]
-    end
-    Claude["Claude API<br/>(meal photos/text only)"]
-    OFF["Open Food Facts<br/>(barcodes only)"]
-
-    App -->|sign in once| OAuth
-    OAuth -->|refresh token| KC
-    App -->|list / rollUp / dailyRollUp| GH
-    GH -->|activity, heart, sleep, body| App
-    App -->|write samples| HK
-    App -->|photo or description| Claude
-    Claude -->|foods + grams| App
-    App -->|look up nutrients| DB
-    App -->|barcode| OFF
+    Band["Fitness band"] -->|Google Health app uploads| Cloud["Google Health API"]
+    Cloud -->|"① fetch new data"| App["HealthBridge<br/>(iPhone)"]
+    App -->|"② write"| Health[("Apple Health")]
 ```
+
+You sign in to Google once; the sign-in token is kept in the iPhone Keychain and refreshed
+automatically.
+
+**2. Food: what you ate → calories → Apple Health**
+
+```mermaid
+flowchart LR
+    You["You"] -->|"photo or text"| Claude["Claude API"]
+    Claude -->|"foods + grams"| App["HealthBridge<br/>(iPhone)"]
+    You -->|"search or barcode"| App
+    App -->|"calories per food"| DB[("Tzameret database<br/>on the phone")]
+    App -.->|"barcode only"| OFF["Open Food Facts"]
+    App -->|"save meal"| Health[("Apple Health")]
+```
+
+Only a meal photo or description you choose to analyze leaves the phone (to Claude), and
+only a scanned barcode number (to Open Food Facts).
 
 - **Google Health API**: `dataPoints` list (newest first, paged), `:reconcile` for sleep,
   `:rollUp` for heart rate (5-minute averages) and hourly steps, `:dailyRollUp` for daily
