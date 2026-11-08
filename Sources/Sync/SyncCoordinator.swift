@@ -171,7 +171,7 @@ final class SyncCoordinator: ObservableObject {
             if trigger == .manual { lastError = outcome.error }
             return outcome
         }
-        let selected = items.filter(isEnabled)
+        var selected = items.filter(isEnabled)
         guard !selected.isEmpty else {
             outcome.error = "לא נבחר אף סוג נתונים לסנכרון."
             if trigger == .manual { lastError = outcome.error }
@@ -186,9 +186,33 @@ final class SyncCoordinator: ObservableObject {
 
         let effectiveRange = trigger == .manual ? range : .automatic
 
+        // Asking for Apple Health permission shows a sheet, which iOS doesn't allow while the
+        // app runs in the background (Shortcuts, background refresh). Only ask in the
+        // foreground; otherwise sync the types that are already allowed.
+        if trigger == .manual || trigger == .appOpen {
+            do {
+                try await healthKitWriter.requestAuthorization(toShare: Set(selected.map(\.hkType)),
+                                                              read: [HKQuantityType(.stepCount)])
+            } catch {
+                outcome.error = "Apple Health: \(error.localizedDescription)"
+                finish(outcome, trigger: trigger, rangeTitle: effectiveRange.title)
+                return outcome
+            }
+        } else {
+            let allowed = selected.filter { healthKitWriter.store.authorizationStatus(for: $0.hkType) == .sharingAuthorized }
+            for item in selected where !allowed.contains(where: { $0.id == item.id }) {
+                status[item.id] = .failed(message: "אין הרשאה ב‑Apple Health")
+                outcome.failedTypes.append(item.name)
+            }
+            selected = allowed
+            guard !selected.isEmpty else {
+                outcome.error = "אין הרשאת כתיבה ל‑Apple Health. פתח את האפליקציה ואשר הרשאות."
+                finish(outcome, trigger: trigger, rangeTitle: effectiveRange.title)
+                return outcome
+            }
+        }
+
         do {
-            try await healthKitWriter.requestAuthorization(toShare: Set(selected.map(\.hkType)),
-                                                          read: [HKQuantityType(.stepCount)])
             // Refresh the access token once up front so the parallel requests share it.
             _ = try await auth.validAccessToken()
         } catch {
@@ -303,7 +327,8 @@ final class SyncCoordinator: ObservableObject {
         }
         history = SyncHistory.append(SyncLogEntry(
             date: Date(), trigger: trigger, rangeTitle: rangeTitle,
-            records: outcome.records, syncedTypes: outcome.syncedTypes, failedTypes: outcome.failedTypes))
+            records: outcome.records, syncedTypes: outcome.syncedTypes, failedTypes: outcome.failedTypes,
+            error: outcome.error))
 
         // Tell the user about problems in syncs they didn't start by hand.
         guard trigger != .manual, AppSettings.notifyProblems else { return }

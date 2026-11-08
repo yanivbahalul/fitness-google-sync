@@ -239,6 +239,11 @@ struct HistoryView: View {
                                 Text("\(entry.trigger.title) · \(entry.rangeTitle) · \(entry.syncedTypes) סוגים · \(entry.records) רשומות")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                                if let error = entry.error {
+                                    Text(error)
+                                        .font(.caption)
+                                        .foregroundStyle(.red)
+                                }
                                 if !entry.failedTypes.isEmpty {
                                     Text("לא סונכרנו: \(entry.failedTypes.joined(separator: ", "))")
                                         .font(.caption)
