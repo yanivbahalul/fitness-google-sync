@@ -1,130 +1,253 @@
 # HealthBridge
 
-*(Shown on the iPhone as **HealthBridge**; the Xcode project, target and bundle ID keep the original `StepsBridge` name so the Google OAuth client and existing Apple Health data stay linked.)*
+**Google Health → Apple Health sync, plus a food diary and weight-loss tracker, on your own iPhone.**
 
-Pulls your daily step totals from **Google Health** (the service your fitness band syncs
-to) and writes them into **Apple Health**, replacing the "Fitness Data Sync" app whose
-access broke when Google shut off the old Fitbit Web API (Nov 2, 2026).
+<p align="left">
+  <img alt="platform" src="https://img.shields.io/badge/platform-iOS%2016%2B-lightgrey?logo=apple&logoColor=white">
+  <img alt="language" src="https://img.shields.io/badge/Swift-5-orange?logo=swift&logoColor=white">
+  <img alt="build" src="https://github.com/yanivbahalul/fitness-google-sync/actions/workflows/build.yml/badge.svg?branch=claude%2Fhei-rbtxak">
+  <img alt="scope" src="https://img.shields.io/badge/scope-personal%2C%20single%20user-informational">
+</p>
 
-Built against Google's current **Google Health API** (the official replacement for the
-retired Fitbit Web API) — see <https://developers.google.com/health/about>.
+Google shut off the old **Fitbit Web API** on Nov 2, 2026, which broke the third-party apps
+that copied band data into Apple Health. HealthBridge talks to Google's new
+**[Google Health API](https://developers.google.com/health/about)** instead and writes
+17 kinds of data straight into Apple Health. A second screen adds a food diary (photo, text,
+Hebrew search, barcode) and progress charts for weight loss.
 
-## What this is / isn't
+> The app's display name is **HealthBridge**. The Xcode project, target and bundle ID keep
+> the original `StepsBridge` name on purpose: the Google OAuth client and the data already
+> written to Apple Health are tied to the bundle ID `com.yanivbahalul.stepsbridge`.
 
-- This is **source code only**. It was written in a Linux cloud container with no Xcode,
-  so it has not been compiled or run. You'll need a Mac with Xcode to build and install it.
-- It's built for **personal, single-user use**. The Google OAuth client stays in
-  "Testing" mode (your own Google account added as a test user) so you skip Google's
-  formal security/privacy review, which is meant for apps with real public user bases.
-  The tradeoff: in Testing mode, Google refresh tokens expire after ~7 days, so you'll
-  need to tap "Connect Google Health" again roughly once a week.
-- Sync is **manual** (a "Sync Now" button), matching how you already use the Google
-  Health app. It pulls the last 14 trailing days each time, so missing a day or two
-  doesn't lose data.
+<!-- Screenshots: add docs/assets/*.png and a gallery here. -->
 
-## 1. Google Cloud setup (one-time, ~10 minutes)
+---
 
-1. Go to <https://console.cloud.google.com/> and create a new project (e.g. "StepsBridge").
-2. Enable the **Google Health API** for that project:
-   <https://console.cloud.google.com/apis/library> → search "Google Health API" → Enable.
-3. Configure the **OAuth consent screen** (APIs & Services → OAuth consent screen):
-   - User type: External.
-   - Leave **Publishing status: Testing**. Do NOT publish/verify the app — that triggers
-     Google's restricted-scope security review, which isn't worth it for personal use.
-   - Under **Audience → Test users**, add your own Google account email.
-   - Under **Data access**, click "Add or remove scopes" and, under "Manually add scopes",
-     paste these four (one per line), then Add to table → Update → Save:
-     ```
-     https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly
-     https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly
-     https://www.googleapis.com/auth/googlehealth.sleep.readonly
-     https://www.googleapis.com/auth/googlehealth.nutrition.readonly
-     ```
-4. Create the **OAuth client ID** (APIs & Services → Credentials → Create Credentials →
-   OAuth client ID):
-   - **Recommended: Application type = iOS**, Bundle ID = `com.yanivbahalul.stepsbridge`.
-     iOS clients accept the app's custom-scheme redirect and don't issue a client
-     secret — the app works without one.
-   - Alternative: **Web application** (what Google's Health API guide shows). It issues a
-     client secret, but the Cloud Console may reject the custom-scheme redirect URI
-     `com.yanivbahalul.stepsbridge:/oauth2redirect` for Web clients. If it does, use iOS.
-5. Copy the **Client ID** (and the **Client secret**, only if you made a Web client).
-6. **Link your Google Health profile**: on your phone, install the "Google Health" app
-   (App Store/Play Store) and sign in with the same Google account before first connecting
-   from StepsBridge — the OAuth consent screen can't detect this for you.
+## Contents
 
-## 2. Configure the app
+- [Features](#features)
+- [How it works](#how-it-works)
+- [Setup](#setup)
+- [Everyday use](#everyday-use)
+- [Project layout](#project-layout)
+- [Privacy](#privacy)
+- [Limitations](#limitations)
+- [Troubleshooting](#troubleshooting)
+- [Data sources](#data-sources)
 
-Nothing to do: the app has this project's iOS OAuth client built in
-(`Sources/Config/AppConfig.swift`), with the redirect URI
-`com.googleusercontent.apps.84175655883-g6tnujthm7282dthp53sbljc4udstrqm:/oauth2redirect`
-(the reversed client ID, which is the scheme Google expects for iOS clients). An iOS client
-ID isn't a secret: it ships inside every app binary.
+---
 
-To use a different OAuth client, copy `Sources/Config/Secrets.example.plist` to
-`Sources/Config/Secrets.plist` (gitignored), fill in your values, and set
-`GOOGLE_OAUTH_REDIRECT_SCHEME` in `project.yml` to the redirect URI's scheme.
+## Features
 
-## 3. Generate the Xcode project and build
+### Sync screen
 
-On a Mac, with Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen) installed
-(`brew install xcodegen`):
+| | |
+|---|---|
+| 🔁 **17 data types** | Steps, distance, active energy, floors, workouts, VO2 max, heart rate, resting heart rate, HRV, blood oxygen, respiratory rate, sleep with stages, weight, body fat, height, water, dietary energy. Each can be switched on or off. |
+| ✅ **Steps match Google exactly** | Daily step totals come from Google's own daily roll-up (the number the Google Health app shows); hourly values only spread that total across the day. *Settings → Steps check* compares the last 7 days side by side. |
+| 🧹 **No duplicates** | Every sync replaces only what the sync itself wrote in its window. Food you log and weights you enter are never touched. |
+| ⏱️ **Automatic** | Syncs when the app opens (at most every 30 min), tries in the background, and has a *Sync HealthBridge* Shortcuts action for a daily automation. Catches up per type after missed days (up to 14), or re-syncs 3–90 days on demand. |
+| 🔔 **Notifications** | When an automatic sync fails or needs a reconnect, and the day before the free-signing build expires. |
 
+### Nutrition screen
+
+| | |
+|---|---|
+| 📷 **Meal from a photo** | Claude (Anthropic) identifies the foods and estimates grams; calories come from the Israeli **Tzameret** database when a match is found. Review and fix before saving. |
+| ✍️ **Meal from text** | "2 slices of whole-wheat bread with hummus and a boiled egg". |
+| 🔍 **Hebrew search** | ~4,600 foods from the Ministry of Health database, offline, with household portions (unit, cup, tablespoon…). |
+| ▦ **Barcode** | Packaged foods via Open Food Facts. |
+| ⚡ **Quick entry** | Just a calorie number, also by Siri: *"Add calories in HealthBridge"*. |
+| 📅 **Any past day** | Browse, add or delete food for earlier days (never future ones). |
+| ⚖️ **Calorie balance** | Burned (Google total calories, incl. resting) vs eaten, with a daily deficit goal. Food other apps write to Apple Health is counted too. |
+| 📈 **Progress** | Weight trend with goal projection, eaten-vs-burned per day, expected vs actual weight change, weekly macro averages, each with a plain-language headline. |
+
+Everything logged is also written to Apple Health (energy, protein, carbs, fat).
+
+## How it works
+
+```mermaid
+flowchart LR
+    subgraph Phone["iPhone"]
+        App["HealthBridge"]
+        KC[("Keychain<br/>Google token, Claude key")]
+        HK[("Apple Health")]
+        DB[("Tzameret DB<br/>(bundled)")]
+    end
+    subgraph Google["Google"]
+        OAuth["OAuth 2.0 + PKCE"]
+        GH["Google Health API v4"]
+    end
+    Claude["Claude API<br/>(meal photos/text only)"]
+    OFF["Open Food Facts<br/>(barcodes only)"]
+
+    App -->|sign in once| OAuth
+    OAuth -->|refresh token| KC
+    App -->|list / rollUp / dailyRollUp| GH
+    GH -->|activity, heart, sleep, body| App
+    App -->|write samples| HK
+    App -->|photo or description| Claude
+    Claude -->|foods + grams| App
+    App -->|look up nutrients| DB
+    App -->|barcode| OFF
 ```
-cd fitness-google-sync   # the repo root, where project.yml lives
+
+- **Google Health API**: `dataPoints` list (newest first, paged), `:reconcile` for sleep,
+  `:rollUp` for heart rate (5-minute averages) and hourly steps, `:dailyRollUp` for daily
+  totals (steps, floors, total calories).
+- **Apple Health**: one writer replaces the sync's own tagged samples per type, so a re-sync
+  never duplicates; food entries carry their own ID so they can be deleted individually.
+- **Meal analysis**: Claude returns structured JSON (foods, Hebrew search terms, grams);
+  the app matches each to Tzameret and computes calories locally.
+
+## Setup
+
+You need a Mac with Xcode, an iPhone, and the Google account your band syncs to.
+
+### 1. Google Cloud (one time, ~10 min)
+
+<details>
+<summary><b>Steps</b></summary>
+
+1. [Google Cloud Console](https://console.cloud.google.com/) → create a project.
+2. **APIs & Services → Library** → "Google Health API" → **Enable**.
+3. **Google Auth Platform → Branding**: app name, support email, developer email, home page
+   and privacy policy links (this repo publishes both from `docs/` with GitHub Pages), and
+   the authorized domain.
+4. **Audience**: user type **External**, add your Google account as a test user, then
+   **Publish app**. Publishing without verification is free and keeps the sign-in from
+   expiring every 7 days; you'll see a "Google hasn't verified this app" warning when
+   signing in (Advanced → continue). Don't submit *data access* for verification: for
+   these restricted scopes it requires a paid annual security assessment.
+5. **Data Access → Add or remove scopes → Manually add scopes**:
+   ```
+   https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly
+   https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly
+   https://www.googleapis.com/auth/googlehealth.sleep.readonly
+   https://www.googleapis.com/auth/googlehealth.nutrition.readonly
+   ```
+6. **Clients → Create client → iOS**, bundle ID `com.yanivbahalul.stepsbridge`. iOS clients
+   have no secret. This project's client ID is already in `Sources/Config/AppConfig.swift`;
+   to use your own, see `Sources/Config/Secrets.example.plist`.
+7. On the phone, install the **Google Health** app and sign in with the same account once.
+
+</details>
+
+### 2. Build and install
+
+```bash
+brew install xcodegen
+git clone -b claude/hei-rbtxak https://github.com/yanivbahalul/fitness-google-sync.git
+cd fitness-google-sync
 xcodegen generate
 open StepsBridge.xcodeproj
 ```
 
-In Xcode:
-1. Select your Apple ID team under Signing & Capabilities (HealthKit requires a real
-   device — it doesn't work in the Simulator).
-2. Build and run on your iPhone.
-3. Tap **Connect Google Health**, sign in, grant the steps permission.
-4. Tap **Sync Now**. Open Apple Health → Browse → Activity → Steps to confirm the data
-   landed there.
+1. **Xcode → Settings → Apple Accounts**: add your Apple ID. The development team is set
+   in `project.yml` (`DEVELOPMENT_TEAM`); change it to your own team ID if you fork this.
+2. Connect the iPhone, pick it as the run destination, press **▶︎**.
+3. First run only: enable **Settings → Privacy & Security → Developer Mode** on the iPhone,
+   then trust your developer certificate in **Settings → General → VPN & Device Management**.
+4. In the app: **Connect Google Health** → allow everything → **Sync Now** → allow Apple Health.
 
-A GitHub Actions workflow (`.github/workflows/build.yml`) compiles the app on a macOS
-runner on every push (unsigned, with placeholder config), so you know the code builds
-before you open Xcode.
+To update later: `git pull && xcodegen generate`, then **▶︎**.
 
-## What gets synced (last 14 days, every Sync Now)
+### 3. Optional: meal analysis
 
-| Google Health | Apple Health |
-|---|---|
-| steps, distance, active energy (summed per hour) | Steps, Walking + Running Distance, Active Energy |
-| floors (per day) | Flights Climbed |
-| heart rate (5-minute averages) | Heart Rate |
-| daily resting heart rate | Resting Heart Rate |
-| heart rate variability (SDNN, when provided) | Heart Rate Variability |
-| oxygen saturation | Blood Oxygen |
-| daily respiratory rate | Respiratory Rate |
-| sleep sessions + stages | Sleep (In Bed, Core, Deep, REM, Awake) |
-| exercise sessions | Workouts |
-| weight, body fat, height | Weight, Body Fat %, Height |
-| VO2 max | Cardio Fitness (VO2 max) |
-| hydration log, nutrition log energy | Water, Dietary Energy |
+Create an API key at [console.anthropic.com](https://console.anthropic.com/settings/keys),
+add a few dollars of credit and a spending limit, then paste the key in **Settings → Meal
+analysis**. The default model is Claude Opus 5.5 (most accurate, roughly $0.02 per photo);
+Sonnet 5.5 and Haiku 5.5 are cheaper. A Claude.ai subscription doesn't cover API use.
 
-Each sync deletes what StepsBridge itself wrote in the window and writes it fresh, so
-nothing duplicates. Each type syncs independently; the app lists per-type counts and errors.
+## Everyday use
 
-## How it works
+- **Swipe** sideways (or use the switcher) between *Sync* and *Nutrition*.
+- Opening the app syncs automatically. For a sync without opening it: **Shortcuts →
+  Automation → Time of Day → Sync HealthBridge**.
+- **Weekly**: with a free Apple ID the build stops opening after 7 days. You get a
+  notification the day before; connect the iPhone and press **▶︎** in Xcode. Data and the
+  Google sign-in are kept. (A paid Apple Developer account extends this to a year.)
+- **Apple Health source order**: if the iPhone also counts steps, put HealthBridge first in
+  **Health → Steps → Data Sources & Access → Edit**.
 
-- `Sources/Auth/GoogleAuthManager.swift` — OAuth 2.0 authorization-code + PKCE flow via
-  `ASWebAuthenticationSession`, token refresh, refresh token stored in Keychain.
-- `Sources/Health/GoogleHealthClient.swift` — `dataPoints` list / `:reconcile` /
-  `:dailyRollUp` calls against `https://health.googleapis.com/v4/users/me/dataTypes/...`.
-- `Sources/Sync/SyncCatalog.swift` — the Google Health → HealthKit mapping table.
-- `Sources/Health/HealthKitWriter.swift` — replaces this app's samples per type.
-- `Sources/Sync/SyncCoordinator.swift` — runs every catalog item on Sync Now.
+## Project layout
 
-## Known limitations
+```
+Sources/
+├── App/      StepsBridgeApp (entry, auto sync), AppState (shared objects, background task),
+│             ContentView (pages, sync screen), NutritionView (nutrition screen, charts),
+│             FoodEntryViews (photo/text/search/barcode/review), SettingsView (settings, history, steps check)
+├── Auth/     GoogleAuthManager (OAuth + PKCE), KeychainStore
+├── Config/   AppConfig (OAuth client), Secrets.example.plist (optional override)
+├── Food/     FoodDatabase + tzameret.json, FoodLog (diary ↔ Apple Health),
+│             MealAnalyzer (Claude + Open Food Facts), ProgressModel (charts data)
+├── Health/   GoogleHealthClient (API calls), HealthKitWriter (replace-in-window writes)
+└── Sync/     SyncCatalog (Google → HealthKit mapping), SyncCoordinator, SyncIntent (Siri/Shortcuts),
+              SyncHistory, Notifier
+docs/         GitHub Pages: home page, privacy policy, Search Console verification
+```
 
-- Weekly re-authentication while the OAuth client is in Testing mode (see above).
-- No background sync — iOS doesn't allow HealthKit writes from background without a
-  much heavier setup (HealthKit background delivery is for *reading*, not writing from
-  a third-party cloud source on a schedule). Manual "Sync Now" is the pragmatic choice
-  given you already check in once a day.
-- If Google changes the Google Health API response shape (it's a newly launched API as
-  of 2026), `GoogleHealthClient.swift` may need updating — check
-  <https://developers.google.com/health/endpoints> if sync starts failing.
+A GitHub Actions workflow compiles the app on macOS for every push (unsigned).
+
+## Privacy
+
+Health data goes from Google Health directly to Apple Health on the phone; there is no server.
+The Google token and the Claude API key are stored only in the iPhone Keychain. Only a meal
+photo or description you choose to analyze is sent to Anthropic's Claude API, and only a
+scanned barcode number is sent to Open Food Facts. See the
+[privacy policy](https://yanivbahalul.github.io/fitness-google-sync/privacy.html).
+
+## Limitations
+
+- **Background sync is best-effort.** iOS decides if and when it runs; the Shortcuts
+  automation is the reliable daily option.
+- **HRV** is only written when Google provides an SDNN value (Apple Health's format); Google
+  usually reports RMSSD, so it's off by default.
+- **Burned calories** depend on Google's estimate from the band.
+- **Photo portions are estimates** (typically ±20–30%); review them before saving.
+- The Google Health API is new; if a data type starts failing, check the
+  [data types reference](https://developers.google.com/health/data-types).
+
+## Troubleshooting
+
+<details>
+<summary><b>"Signing requires a development team"</b></summary>
+
+Set your team in **Signing & Capabilities**, or put your team ID in `project.yml` under
+`DEVELOPMENT_TEAM` so `xcodegen generate` keeps it. Find it with
+`security find-certificate -c "Apple Development" -p | openssl x509 -noout -subject` (the `OU=` value).
+</details>
+
+<details>
+<summary><b>"Developer Mode disabled" / "Untrusted Developer"</b></summary>
+
+Developer Mode appears under Privacy & Security only after Xcode tries to run on the phone.
+Then trust the certificate under General → VPN & Device Management.
+</details>
+
+<details>
+<summary><b>A data type shows ⚠️ after syncing</b></summary>
+
+"No permission": disconnect and connect Google again, allowing every scope. Otherwise open
+the sync log (clock icon) to see which types failed.
+</details>
+
+<details>
+<summary><b>Steps in Apple Health differ from Google</b></summary>
+
+Open **Settings → Steps check**. If HealthBridge matches Google but Apple Health doesn't,
+another source (the iPhone) is winning; reorder sources as described above.
+</details>
+
+<details>
+<summary><b>Meal analysis says the key is invalid or has no credit</b></summary>
+
+Check the key in Settings and the balance at console.anthropic.com.
+</details>
+
+## Data sources
+
+- Food nutrients: **Israeli National Nutrition Database (Tzameret)**, Ministry of Health,
+  via [data.gov.il](https://data.gov.il/dataset/nutrition-database).
+- Packaged foods: [Open Food Facts](https://world.openfoodfacts.org/) (ODbL).
+- Health data: [Google Health API](https://developers.google.com/health).
