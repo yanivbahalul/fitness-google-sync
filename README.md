@@ -17,14 +17,18 @@
 </div>
 
 <p align="center">
-  <img src="docs/screenshots/sync.png"     width="200" alt="Sync">
-  <img src="docs/screenshots/progress.png" width="200" alt="Weight progress">
-  <img src="docs/screenshots/balance.png"  width="200" alt="Eaten vs burned">
+  <img src="docs/screenshots/activity.png"  width="200" alt="Activity page">
+  <img src="docs/screenshots/nutrition.png" width="200" alt="Nutrition page: calorie balance and adding food">
+  <img src="docs/screenshots/diary.png"     width="200" alt="Food diary">
 </p>
 <p align="center">
-  <img src="docs/screenshots/meal-photo.png"  width="200" alt="Meal recognized from a photo">
-  <img src="docs/screenshots/meal-total.png"  width="200" alt="Meal review before saving">
-  <img src="docs/screenshots/steps-check.png" width="200" alt="Steps check against Google">
+  <img src="docs/screenshots/progress.png"   width="200" alt="Weight progress">
+  <img src="docs/screenshots/charts.png"     width="200" alt="Progress cards before 7 days of tracking">
+  <img src="docs/screenshots/meal-photo.png" width="200" alt="Meal recognized from a photo">
+</p>
+<p align="center">
+  <img src="docs/screenshots/settings.png" width="200" alt="Settings">
+  <img src="docs/screenshots/history.png"  width="200" alt="Sync log">
 </p>
 
 ## Why

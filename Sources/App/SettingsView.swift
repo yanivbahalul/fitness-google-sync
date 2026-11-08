@@ -293,9 +293,10 @@ struct StepsCheckView: View {
                                 Text(row.day.formatted(.dateTime.weekday(.wide).day().month().locale(.he)))
                                     .font(.body.weight(.semibold))
                                 Spacer()
-                                Image(systemName: row.matches ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                                    .foregroundStyle(row.matches ? .green : .orange)
-                                    .accessibilityLabel(row.matches ? "תואם" : "לא תואם")
+                                let state = status(of: row)
+                                Image(systemName: state.symbol)
+                                    .foregroundStyle(state.color)
+                                    .accessibilityLabel(state.label)
                             }
                             HStack(spacing: 8) {
                                 StatTile(title: "Google", value: row.google.formatted())
@@ -309,6 +310,8 @@ struct StepsCheckView: View {
                 }
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
+                    Label("שעון: Google קיבל צעדים חדשים אחרי הסנכרון האחרון. יתעדכן בסנכרון הבא.",
+                          systemImage: "clock.arrow.circlepath")
                     Text("אם רק Apple Health שונה: בריאות ← צעדים ← מקורות נתונים ← העבר את HealthBridge לראש הרשימה.")
                 }
             }
@@ -329,6 +332,18 @@ struct StepsCheckView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .refreshable { await load() }
+    }
+
+    /// Google ahead of HealthBridge on today or yesterday is normal: the band uploaded more
+    /// steps after the last sync (e.g. late in the evening). Only other differences are a problem.
+    private func status(of row: SyncCoordinator.StepsDay) -> (symbol: String, color: Color, label: String) {
+        if row.matches { return ("checkmark.circle.fill", .green, "תואם") }
+        let calendar = Calendar.current
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: Date()))!
+        if row.google > row.stepsBridge, row.day >= yesterday {
+            return ("clock.arrow.circlepath", .secondary, "יתעדכן בסנכרון הבא")
+        }
+        return ("exclamationmark.triangle.fill", .orange, "לא תואם")
     }
 
     private func load() async {
