@@ -16,20 +16,52 @@
 
 </div>
 
-<p align="center">
-  <img src="docs/screenshots/activity.png"  width="200" alt="Activity page">
-  <img src="docs/screenshots/nutrition.png" width="200" alt="Nutrition page: calorie balance and adding food">
-  <img src="docs/screenshots/diary.png"     width="200" alt="Food diary">
-</p>
-<p align="center">
-  <img src="docs/screenshots/progress.png"   width="200" alt="Weight progress">
-  <img src="docs/screenshots/charts.png"     width="200" alt="Progress cards before 7 days of tracking">
-  <img src="docs/screenshots/meal-photo.png" width="200" alt="Meal recognized from a photo">
-</p>
-<p align="center">
-  <img src="docs/screenshots/settings.png" width="200" alt="Settings">
-  <img src="docs/screenshots/history.png"  width="200" alt="Sync log">
-</p>
+<table>
+  <tr>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/screenshots/activity.png" width="190" alt="Activity page: today's steps, distance, calories and floors, with steps per day against the goal"><br>
+      <b>Activity</b><br>
+      <sub>Today's steps against the goal, distance, total calories burned and floors, then trends for a week, month or 3 months.</sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/screenshots/nutrition.png" width="190" alt="Nutrition page: calorie balance for the selected day and the ways to add food"><br>
+      <b>Calorie balance</b><br>
+      <sub>Burned (from Google) vs eaten for any day, the deficit and the daily goal, and five ways to add food.</sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/screenshots/diary.png" width="190" alt="Food diary for one day with each item's calories, time and grams"><br>
+      <b>Food diary</b><br>
+      <sub>Everything logged that day, with how it was added (photo, text, search). Tap ⋯ to edit or delete.</sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/screenshots/meal-photo.png" width="190" alt="Foods recognized in a meal photo with editable grams before saving"><br>
+      <b>Meal from a photo</b><br>
+      <sub>Claude identifies the foods and grams; you fix amounts or switch items off before saving.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/screenshots/progress.png" width="190" alt="Weight chart over six months with the current weight, weekly pace and goal"><br>
+      <b>Weight progress</b><br>
+      <sub>Daily weigh-ins and the 7-day trend, weekly pace, a weight goal and when you'll reach it.</sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/screenshots/charts.png" width="190" alt="Progress cards waiting for 7 days of food tracking, and weekly macro averages"><br>
+      <b>Balance and macros</b><br>
+      <sub>Eaten vs burned and expected vs actual appear after 7 days of tracking; below, last week's averages.</sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/screenshots/settings.png" width="190" alt="Settings: Google connection, what to sync, automatic sync options"><br>
+      <b>Settings</b><br>
+      <sub>Connection, what to sync, Apple Health display, automatic sync, nutrition, meal analysis and notifications.</sub>
+    </td>
+    <td align="center" valign="top" width="25%">
+      <img src="docs/screenshots/history.png" width="190" alt="Sync log listing each sync with its time, trigger, types and records"><br>
+      <b>Sync log</b><br>
+      <sub>Every sync with its trigger (app open, Shortcut, manual), types, records and any errors.</sub>
+    </td>
+  </tr>
+</table>
 
 ## Why
 
