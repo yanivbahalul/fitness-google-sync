@@ -2,39 +2,54 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var auth: GoogleAuthManager
+    @EnvironmentObject private var sync: SyncCoordinator
     @State private var showSettings = false
     @State private var showHistory = false
-    /// 0 = sync, 1 = activity, 2 = nutrition. Swipe sideways or tap the picker to switch.
-    @AppStorage("selectedPage") private var page = 0
+    /// 0 = activity, 1 = nutrition. Swipe sideways or tap the switcher.
+    @AppStorage("mainPage") private var page = 0
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                Picker("מסך", selection: $page) {
-                    Label("סנכרון", systemImage: "arrow.triangle.2.circlepath").tag(0)
-                    Label("פעילות", systemImage: "figure.walk").tag(1)
-                    Label("תזונה", systemImage: "fork.knife").tag(2)
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, DS.pagePadding)
-                .padding(.vertical, 8)
+            Group {
+                if auth.isSignedIn {
+                    VStack(spacing: 0) {
+                        Picker("מסך", selection: $page) {
+                            Label("פעילות", systemImage: "figure.walk").tag(0)
+                            Label("תזונה", systemImage: "fork.knife").tag(1)
+                        }
+                        .pickerStyle(.segmented)
+                        .padding(.horizontal, DS.pagePadding)
+                        .padding(.vertical, 8)
 
-                TabView(selection: $page) {
-                    SyncPage().tag(0)
-                    ActivityPage().tag(1)
-                    NutritionPage().tag(2)
+                        SyncBanner()
+
+                        TabView(selection: $page) {
+                            ActivityPage().tag(0)
+                            NutritionPage().tag(1)
+                        }
+                        .tabViewStyle(.page(indexDisplayMode: .never))
+                    }
+                } else {
+                    ScrollView {
+                        ConnectCard().padding(DS.pagePadding)
+                    }
                 }
-                .tabViewStyle(.page(indexDisplayMode: .never))
             }
             .pageBackground()
-            .navigationTitle("HealthBridge")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button { showSettings = true } label: {
-                        Image(systemName: "gearshape.fill")
+                        Image(systemName: "gearshape")
                     }
                     .accessibilityLabel("הגדרות")
+                }
+                ToolbarItem(placement: .principal) {
+                    if auth.isSignedIn {
+                        SyncButton()
+                    } else {
+                        Text("HealthBridge").font(.headline)
+                    }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button { showHistory = true } label: {
@@ -50,25 +65,52 @@ struct ContentView: View {
     }
 }
 
-/// The sync screen: account, sync button and the data types to sync.
-private struct SyncPage: View {
-    @EnvironmentObject private var auth: GoogleAuthManager
+/// Compact "Sync now" button in the navigation bar; shows progress while syncing.
+private struct SyncButton: View {
+    @EnvironmentObject private var sync: SyncCoordinator
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: DS.cardSpacing) {
-                if auth.isSignedIn {
-                    SyncCard()
-                    ForEach(SyncCategory.allCases) { category in
-                        CategoryCard(category: category)
-                    }
+        Button {
+            Task { await sync.syncNow() }
+        } label: {
+            HStack(spacing: 6) {
+                if sync.isSyncing {
+                    ProgressView().controlSize(.small).tint(.white)
+                    Text("\(Int(safe: sync.progress * 100))%").monospacedDigit()
                 } else {
-                    ConnectCard()
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                    Text("סנכרן עכשיו")
                 }
             }
-            .padding(.horizontal, DS.pagePadding)
-            .padding(.bottom, 24)
+            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal, 4)
         }
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.capsule)
+        .controlSize(.small)
+        .disabled(sync.isSyncing || sync.enabledCount == 0)
+        .accessibilityLabel(sync.isSyncing ? "מסנכרן" : "סנכרן עכשיו")
+        .accessibilityValue(sync.isSyncing
+            ? "\(Int(safe: sync.progress * 100)) אחוז"
+            : sync.lastSyncDate.map { "סנכרון אחרון \($0.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: .he)))" } ?? "")
+    }
+}
+
+/// Sync problems, shown under the page switcher only when there is one.
+private struct SyncBanner: View {
+    @EnvironmentObject private var sync: SyncCoordinator
+
+    var body: some View {
+        VStack(spacing: 8) {
+            if sync.needsReconnect {
+                Notice(symbol: "key.fill", color: .orange,
+                       text: "חסרה הרשאה לחלק מהנתונים. בהגדרות: התנתק, התחבר מחדש ואשר את כל ההרשאות.")
+            }
+            if let error = sync.lastError {
+                Notice(symbol: "exclamationmark.triangle.fill", color: .red, text: error)
+            }
+        }
+        .padding(.horizontal, DS.pagePadding)
     }
 }
 
@@ -87,83 +129,6 @@ private struct ConnectCard: View {
             }
             if let error = auth.lastError {
                 Text(error).font(.footnote).foregroundStyle(.red)
-            }
-        }
-    }
-}
-
-// MARK: - Sync
-
-private struct SyncCard: View {
-    @EnvironmentObject private var sync: SyncCoordinator
-
-    var body: some View {
-        Card {
-            Button {
-                Task { await sync.syncNow() }
-            } label: {
-                VStack(spacing: 6) {
-                    if sync.isSyncing {
-                        ProgressView(value: sync.progress)
-                            .tint(.white)
-                            .padding(.horizontal, 24)
-                        Text("מסנכרן… \(Int(safe: sync.progress * 100))%")
-                            .font(.headline)
-                    } else {
-                        Label("סנכרן עכשיו", systemImage: "arrow.triangle.2.circlepath")
-                            .font(.title3.bold())
-                        Text("\(sync.enabledCount) סוגי נתונים · \(sync.range.title)")
-                            .font(.subheadline)
-                            .opacity(0.9)
-                        Label("מחובר ל‑Google", systemImage: "checkmark.circle.fill")
-                            .font(.caption.weight(.semibold))
-                            .opacity(0.9)
-                    }
-                }
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity, minHeight: 100)
-                .background(Theme.accent, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .opacity(sync.enabledCount == 0 ? 0.5 : 1)
-            }
-            .buttonStyle(.plain)
-            .disabled(sync.isSyncing || sync.enabledCount == 0)
-            .accessibilityLabel(sync.isSyncing ? "מסנכרן, \(Int(safe: sync.progress * 100)) אחוז" : "סנכרן עכשיו, \(sync.enabledCount) סוגי נתונים")
-
-            HStack {
-                if let date = sync.lastSyncDate {
-                    Label {
-                        Text("הושלם: \(date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, locale: .he)))")
-                    } icon: {
-                        Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
-                    }
-                    .font(.subheadline)
-                } else {
-                    Text("עדיין לא סונכרן").font(.subheadline).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 8)
-                Menu {
-                    Picker("טווח סנכרון", selection: $sync.range) {
-                        ForEach(SyncRange.allCases) { range in
-                            Text(range.title).tag(range)
-                        }
-                    }
-                } label: {
-                    Label(sync.range.title, systemImage: "calendar")
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(Color(.tertiarySystemFill), in: Capsule())
-                }
-                .accessibilityLabel("טווח סנכרון: \(sync.range.title)")
-                .disabled(sync.isSyncing)
-            }
-
-            if sync.needsReconnect {
-                Notice(symbol: "key.fill", color: .orange,
-                       text: "חסרה הרשאה לחלק מהנתונים. בהגדרות: התנתק, התחבר מחדש ואשר את כל ההרשאות.")
-            }
-            if let error = sync.lastError {
-                Notice(symbol: "exclamationmark.triangle.fill", color: .red, text: error)
             }
         }
     }
@@ -234,7 +199,7 @@ struct EnergyCard: View {
 
 // MARK: - Categories
 
-private struct CategoryCard: View {
+struct CategoryCard: View {
     @EnvironmentObject private var sync: SyncCoordinator
     let category: SyncCategory
 

@@ -22,12 +22,94 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                // MARK: Sync
                 Section {
+                    LabeledContent {
+                        Text(auth.isSignedIn ? "מחובר" : "לא מחובר")
+                            .foregroundStyle(auth.isSignedIn ? .green : .secondary)
+                    } label: {
+                        SettingLabel("Google Health", symbol: "person.crop.circle")
+                    }
+                    if let date = sync.lastSyncDate {
+                        LabeledContent {
+                            Text(date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, locale: .he)))
+                        } label: {
+                            SettingLabel("סנכרון אחרון", symbol: "clock")
+                        }
+                    }
+                    Picker(selection: $sync.range) {
+                        ForEach(SyncRange.allCases) { Text($0.title).tag($0) }
+                    } label: {
+                        SettingLabel("טווח סנכרון ידני", symbol: "calendar")
+                    }
+                    NavigationLink {
+                        SyncTypesView()
+                    } label: {
+                        LabeledContent {
+                            Text("\(sync.enabledCount) מתוך \(sync.items.count)")
+                        } label: {
+                            SettingLabel("מה לסנכרן", symbol: "checklist")
+                        }
+                    }
                     NavigationLink {
                         StepsCheckView()
                     } label: {
-                        SettingLabel("בדיקת צעדים מול Google", symbol: "checkmark.shield.fill", color: .green)
+                        SettingLabel("בדיקת צעדים מול Google", symbol: "checkmark.shield")
                     }
+                } header: {
+                    Text("סנכרון")
+                }
+
+                Section {
+                    Toggle(isOn: $autoSyncOnOpen) {
+                        SettingLabel("בפתיחת האפליקציה", symbol: "iphone")
+                    }
+                    Toggle(isOn: $backgroundSync) {
+                        SettingLabel("ברקע", symbol: "moon.zzz")
+                    }
+                    .onChange(of: backgroundSync) { _ in BackgroundSync.schedule() }
+                    VStack(alignment: .leading, spacing: 6) {
+                        SettingLabel("בשעה קבועה (קיצורים)", symbol: "square.stack.3d.up")
+                        Text("קיצורים ← אוטומציה ← שעה ביום ← \"סנכרן את HealthBridge\"")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 2)
+                    if #available(iOS 16.4, *) {
+                        ShortcutsLink()
+                            .shortcutsLinkStyle(.automaticOutline)
+                            .frame(maxWidth: .infinity)
+                    }
+                } header: {
+                    Text("סנכרון אוטומטי")
+                }
+
+                // MARK: Nutrition
+                Section {
+                    Stepper(value: $deficitGoal, in: 0...2000, step: 50) {
+                        LabeledContent {
+                            Text("\(deficitGoal.formatted()) קק\"ל").monospacedDigit()
+                        } label: {
+                            SettingLabel("יעד גרעון יומי", symbol: "target")
+                        }
+                    }
+                    DatePicker(selection: Binding(
+                        get: { AppSettings.foodTrackingStart },
+                        set: { AppSettings.foodTrackingStart = $0; trackingStartChanged.toggle() }
+                    ), in: ...Date(), displayedComponents: .date) {
+                        SettingLabel("סופרים אוכל החל מ", symbol: "calendar.badge.clock")
+                    }
+                    .id(trackingStartChanged)
+                    let oldImports = FoodLog.shared.importedEntries(before: AppSettings.foodTrackingStart).count
+                    if oldImports > 0 {
+                        Button(role: .destructive) {
+                            Task { await FoodLog.shared.deleteImported(before: AppSettings.foodTrackingStart) }
+                        } label: {
+                            Label("מחק \(oldImports) רשומות Cali ישנות", systemImage: "trash")
+                        }
+                    }
+                } header: {
+                    Text("תזונה")
                 }
 
                 Section {
@@ -40,82 +122,25 @@ struct SettingsView: View {
                         keySaved = !trimmed.isEmpty
                     }
                     if keySaved {
-                        Label("מפתח שמור במכשיר", systemImage: "checkmark.seal.fill").foregroundStyle(.green)
+                        Label("מפתח שמור במכשיר", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
                     }
                     Picker("מודל", selection: $mealModel) {
                         ForEach(MealModel.allCases) { Text($0.title).tag($0.rawValue) }
                     }
                     Link(destination: URL(string: "https://console.anthropic.com/settings/keys")!) {
-                        Label("יצירת מפתח ב‑console.anthropic.com", systemImage: "key.fill")
+                        Label("יצירת מפתח ב‑console.anthropic.com", systemImage: "key")
                     }
                 } header: {
                     Text("ניתוח ארוחות (Claude)")
                 }
 
-                Section {
-                    Stepper(value: $deficitGoal, in: 0...2000, step: 50) {
-                        HStack {
-                            SettingLabel("יעד גרעון יומי", symbol: "target", color: .green)
-                            Spacer()
-                            Text("\(deficitGoal.formatted()) קק\"ל")
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    DatePicker(selection: Binding(
-                        get: { AppSettings.foodTrackingStart },
-                        set: { AppSettings.foodTrackingStart = $0; trackingStartChanged.toggle() }
-                    ), in: ...Date(), displayedComponents: .date) {
-                        SettingLabel("סופרים אוכל החל מ", symbol: "calendar", color: .teal)
-                    }
-                    .id(trackingStartChanged)
-                    let oldImports = FoodLog.shared.importedEntries(before: AppSettings.foodTrackingStart).count
-                    if oldImports > 0 {
-                        Button(role: .destructive) {
-                            Task { await FoodLog.shared.deleteImported(before: AppSettings.foodTrackingStart) }
-                        } label: {
-                            Label("מחק \(oldImports) רשומות Cali ישנות", systemImage: "trash")
-                        }
-                    }
-                } header: {
-                    Text("מאזן קלורי")
-                }
-
-                Section {
-                    Toggle(isOn: $autoSyncOnOpen) {
-                        SettingLabel("סנכרון בפתיחת האפליקציה", symbol: "iphone", color: .blue)
-                    }
-                    Toggle(isOn: $backgroundSync) {
-                        SettingLabel("סנכרון ברקע", symbol: "moon.zzz.fill", color: .indigo)
-                    }
-                    .onChange(of: backgroundSync) { _ in BackgroundSync.schedule() }
-                } header: {
-                    Text("סנכרון אוטומטי")
-                }
-
-                Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        SettingLabel("סנכרון יומי בשעה קבועה", symbol: "square.stack.3d.up.fill", color: .pink)
-                        Text("קיצורים ← אוטומציה ← שעה ביום ← \"סנכרן את HealthBridge\"")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 4)
-                    if #available(iOS 16.4, *) {
-                        ShortcutsLink()
-                            .shortcutsLinkStyle(.automaticOutline)
-                            .frame(maxWidth: .infinity)
-                    }
-                } header: {
-                    Text("קיצורים")
-                }
-
+                // MARK: Other
                 Section {
                     Toggle(isOn: $notifyProblems) {
-                        SettingLabel("התראה כשסנכרון אוטומטי נכשל", symbol: "bell.badge.fill", color: .red)
+                        SettingLabel("כשסנכרון אוטומטי נכשל", symbol: "bell.badge")
                     }
                     Toggle(isOn: $expiryReminder) {
-                        SettingLabel("תזכורת לחידוש ב‑Xcode", symbol: "hammer.fill", color: .orange)
+                        SettingLabel("תזכורת לחידוש ב‑Xcode", symbol: "hammer")
                     }
                     .onChange(of: expiryReminder) { on in Notifier.scheduleExpiryReminders(enabled: on) }
                     if let expiry {
@@ -126,7 +151,6 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    LabeledContent("חשבון", value: auth.isSignedIn ? "מחובר" : "לא מחובר")
                     if auth.isSignedIn {
                         Button(role: .destructive) {
                             auth.signOut()
@@ -134,21 +158,13 @@ struct SettingsView: View {
                             Label("התנתק מ‑Google", systemImage: "rectangle.portrait.and.arrow.right")
                         }
                     }
-                } header: {
-                    Text("חשבון Google")
-                }
-
-                Section {
                     Link(destination: URL(string: "https://yanivbahalul.github.io/fitness-google-sync/privacy.html")!) {
-                        Label("מדיניות פרטיות", systemImage: "hand.raised.fill")
+                        Label("מדיניות פרטיות", systemImage: "hand.raised")
                     }
-                    Text("נתוני הבריאות עוברים ישירות מ‑Google Health אל Apple Health באייפון, בלי שרת. רק צילום או תיאור של ארוחה שאתה בוחר לנתח נשלח ל‑Claude (Anthropic), וברקוד נשלח ל‑Open Food Facts.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
                 } header: {
-                    Text("פרטיות")
+                    Text("חשבון ופרטיות")
                 } footer: {
-                    Text("ערכי המזון: מאגר התזונה הלאומי הישראלי (צמרת), משרד הבריאות, data.gov.il. מוצרים ארוזים: Open Food Facts.")
+                    Text("נתוני הבריאות עוברים ישירות מ‑Google Health ל‑Apple Health, בלי שרת. ערכי מזון: מאגר צמרת, משרד הבריאות. מוצרים ארוזים: Open Food Facts.")
                 }
             }
             .navigationTitle("הגדרות")
@@ -166,12 +182,10 @@ struct SettingsView: View {
 private struct SettingLabel: View {
     let title: String
     let symbol: String
-    let color: Color
 
-    init(_ title: String, symbol: String, color: Color) {
+    init(_ title: String, symbol: String) {
         self.title = title
         self.symbol = symbol
-        self.color = color
     }
 
     var body: some View {
@@ -179,6 +193,23 @@ private struct SettingLabel: View {
             SoftIcon(symbol: symbol, size: 28)
             Text(title)
         }
+    }
+}
+
+/// Choose which data types to sync (moved here from the old sync page).
+struct SyncTypesView: View {
+    var body: some View {
+        ScrollView {
+            VStack(spacing: DS.cardSpacing) {
+                ForEach(SyncCategory.allCases) { category in
+                    CategoryCard(category: category)
+                }
+            }
+            .padding(DS.pagePadding)
+        }
+        .pageBackground()
+        .navigationTitle("מה לסנכרן")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
