@@ -156,8 +156,8 @@ enum HealthAuthorization {
     static func request() async {
         guard HKHealthStore.isHealthDataAvailable(), !done else { return }
         if let inFlight { await inFlight.value; return }
-        let task = Task {
-            try? await store.requestAuthorization(toShare: shareTypes, read: readTypes)
+        let task = Task<Void, Never> {
+            _ = try? await store.requestAuthorization(toShare: shareTypes, read: readTypes)
         }
         inFlight = task
         await task.value
