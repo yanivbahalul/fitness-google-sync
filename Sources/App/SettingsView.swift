@@ -236,7 +236,8 @@ struct HistoryView: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(entry.date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, locale: .he)))
                                     .font(.body.weight(.semibold))
-                                Text("\(entry.trigger.title) · \(entry.rangeTitle) · \(entry.syncedTypes) סוגים · \(entry.records) רשומות")
+                                Text("\(entry.trigger.title) · \(entry.rangeTitle) · \(entry.syncedTypes) סוגים · \(entry.records) רשומות"
+                                     + ((entry.skippedTypes ?? 0) > 0 ? " · \(entry.skippedTypes ?? 0) עודכנו לאחרונה" : ""))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                 if let error = entry.error {

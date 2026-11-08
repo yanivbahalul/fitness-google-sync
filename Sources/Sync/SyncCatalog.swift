@@ -35,6 +35,9 @@ struct SyncItem: Identifiable {
     let fetch: (_ client: GoogleHealthClient, _ since: Date, _ now: Date) async throws -> [HKSample]
     var category: SyncCategory = .activity
     var symbol: String = "circle"
+    /// Minimum time between automatic fetches of this type. Data that changes a few times
+    /// a day at most (sleep, weight, daily metrics, workouts) isn't re-fetched every sync.
+    var refreshInterval: TimeInterval = 0
 
     /// Stable id (the HealthKit type identifier), used to remember selections.
     var id: String { hkType.identifier }
@@ -43,6 +46,12 @@ struct SyncItem: Identifiable {
         var copy = self
         copy.category = category
         copy.symbol = symbol
+        return copy
+    }
+
+    func every(hours: Double) -> SyncItem {
+        var copy = self
+        copy.refreshInterval = hours * 3600
         return copy
     }
 }
@@ -63,29 +72,29 @@ enum SyncCatalog {
                         hk: .activeEnergyBurned, unit: .kilocalorie()).tagged(.activity, "flame.fill"),
             dailyRollUp(name: "קומות", dataType: "floors", valueKey: "floors",
                         hk: .flightsClimbed, unit: .count()).tagged(.activity, "figure.stairs"),
-            vo2Max.tagged(.activity, "lungs.fill"),
-            workouts.tagged(.activity, "figure.run"),
+            vo2Max.tagged(.activity, "lungs.fill").every(hours: 4),
+            workouts.tagged(.activity, "figure.run").every(hours: 1),
 
             // MARK: health_metrics_and_measurements
             heartRate.tagged(.heart, "heart.fill"),
             daily(name: "דופק במנוחה", dataType: "daily-resting-heart-rate", key: "dailyRestingHeartRate",
-                  field: "beatsPerMinute", hk: .restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute())).tagged(.heart, "heart.text.square.fill"),
+                  field: "beatsPerMinute", hk: .restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute())).tagged(.heart, "heart.text.square.fill").every(hours: 4),
             // Apple Health stores HRV as SDNN; only write it when Google provides the SDNN value.
             samples(name: "HRV", dataType: "heart-rate-variability", key: "heartRateVariability",
-                    field: "standardDeviationMilliseconds", hk: .heartRateVariabilitySDNN, unit: .secondUnit(with: .milli)).tagged(.heart, "waveform.path.ecg"),
+                    field: "standardDeviationMilliseconds", hk: .heartRateVariabilitySDNN, unit: .secondUnit(with: .milli)).tagged(.heart, "waveform.path.ecg").every(hours: 4),
             samples(name: "חמצן בדם", dataType: "oxygen-saturation", key: "oxygenSaturation", field: "percentage",
-                    hk: .oxygenSaturation, unit: .percent(), scale: 0.01).tagged(.heart, "drop.fill"),
+                    hk: .oxygenSaturation, unit: .percent(), scale: 0.01).tagged(.heart, "drop.fill").every(hours: 4),
             daily(name: "קצב נשימה", dataType: "daily-respiratory-rate", key: "dailyRespiratoryRate",
-                  field: "breathsPerMinute", hk: .respiratoryRate, unit: HKUnit.count().unitDivided(by: .minute())).tagged(.heart, "wind"),
+                  field: "breathsPerMinute", hk: .respiratoryRate, unit: HKUnit.count().unitDivided(by: .minute())).tagged(.heart, "wind").every(hours: 4),
             samples(name: "משקל", dataType: "weight", key: "weight", field: "weightGrams",
-                    hk: .bodyMass, unit: .gram()).tagged(.body, "scalemass.fill"),
+                    hk: .bodyMass, unit: .gram()).tagged(.body, "scalemass.fill").every(hours: 4),
             samples(name: "אחוז שומן", dataType: "body-fat", key: "bodyFat", field: "percentage",
-                    hk: .bodyFatPercentage, unit: .percent(), scale: 0.01).tagged(.body, "percent"),
+                    hk: .bodyFatPercentage, unit: .percent(), scale: 0.01).tagged(.body, "percent").every(hours: 4),
             samples(name: "גובה", dataType: "height", key: "height", field: "heightMillimeters",
-                    hk: .height, unit: .meter(), scale: 0.001).tagged(.body, "ruler.fill"),
+                    hk: .height, unit: .meter(), scale: 0.001).tagged(.body, "ruler.fill").every(hours: 4),
 
             // MARK: sleep
-            sleep.tagged(.sleep, "bed.double.fill"),
+            sleep.tagged(.sleep, "bed.double.fill").every(hours: 4),
 
             // MARK: nutrition
             intervalSum(name: "שתייה", dataType: "hydration-log", key: "hydrationLog", field: "amountConsumed.milliliters",

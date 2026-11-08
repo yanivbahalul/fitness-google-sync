@@ -139,11 +139,12 @@ struct ActivityPage: View {
     @StateObject private var model = ActivityModel()
     @EnvironmentObject private var sync: SyncCoordinator
     @AppStorage(AppSettings.stepGoalKey) private var stepGoal = 10000
+    @State private var burnedToday: Int?
 
     var body: some View {
         ScrollView {
             VStack(spacing: DS.cardSpacing) {
-                TodayStepsCard(model: model, goal: stepGoal)
+                TodayStepsCard(model: model, goal: stepGoal, burned: burnedToday, dataThrough: sync.today?.dataThrough)
                 Picker("תקופה", selection: $model.range) {
                     ForEach(ActivityModel.Range.allCases) { Text($0.title).tag($0) }
                 }
@@ -156,6 +157,7 @@ struct ActivityPage: View {
             .padding(.bottom, 24)
         }
         .task { await model.refresh() }
+        .task(id: sync.lastSyncDate) { burnedToday = await sync.burned(on: Date()) }
         .refreshable { await model.refresh() }
         .onChange(of: model.range) { _ in Task { await model.refresh() } }
         .onChange(of: sync.lastSyncDate) { _ in Task { await model.refresh() } }
@@ -165,6 +167,9 @@ struct ActivityPage: View {
 private struct TodayStepsCard: View {
     @ObservedObject var model: ActivityModel
     let goal: Int
+    /// Total calories burned today (resting + active), the number Google Health shows.
+    let burned: Int?
+    let dataThrough: Date?
 
     var body: some View {
         let steps = model.today(model.steps)
@@ -203,10 +208,17 @@ private struct TodayStepsCard: View {
 
             HStack(spacing: 8) {
                 StatTile(title: "ק״מ", value: String(format: "%.1f", model.today(model.distanceKm)), symbol: "map.fill")
-                StatTile(title: "קלוריות פעילות", value: Int(safe: model.today(model.activeKcal)).formatted(), symbol: "flame.fill")
+                let active = Int(safe: model.today(model.activeKcal))
+                if let burned {
+                    StatTile(title: "נשרפו, \(active.formatted()) בפעילות", value: burned.formatted(), symbol: "flame.fill")
+                } else {
+                    StatTile(title: "קלוריות פעילות", value: active.formatted(), symbol: "flame.fill")
+                }
                 StatTile(title: "קומות", value: Int(safe: model.today(model.floors)).formatted(), symbol: "figure.stairs")
             }
-            Text("הנתונים מתעדכנים בכל סנכרון.")
+            Text(dataThrough.map { Calendar.current.isDateInToday($0)
+                    ? "נתוני הצמיד עד \($0.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: .he)))"
+                    : "הנתונים מתעדכנים בכל סנכרון." } ?? "הנתונים מתעדכנים בכל סנכרון.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

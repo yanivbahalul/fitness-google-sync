@@ -8,7 +8,7 @@
 
 <img alt="platform" src="https://img.shields.io/badge/iOS-16%2B-000000?logo=apple&logoColor=white">
 <img alt="swift" src="https://img.shields.io/badge/Swift-5-F05138?logo=swift&logoColor=white">
-<img alt="build" src="https://github.com/yanivbahalul/fitness-google-sync/actions/workflows/build.yml/badge.svg?branch=claude%2Fhei-rbtxak">
+<img alt="build" src="https://github.com/yanivbahalul/fitness-google-sync/actions/workflows/build.yml/badge.svg?branch=main">
 <img alt="api" src="https://img.shields.io/badge/Google%20Health%20API-v4-4285F4?logo=google&logoColor=white">
 <img alt="scope" src="https://img.shields.io/badge/use-personal-6E6E73">
 
