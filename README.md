@@ -17,7 +17,7 @@
 </div>
 
 <p align="center">
-  <img src="docs/screenshots/sync.png"     width="200" alt="Sync screen">
+  <img src="docs/screenshots/sync.png"     width="200" alt="Sync">
   <img src="docs/screenshots/progress.png" width="200" alt="Weight progress">
   <img src="docs/screenshots/balance.png"  width="200" alt="Eaten vs burned">
 </p>
@@ -57,28 +57,41 @@ weight loss over time. It runs entirely on the phone, with no server.
 
 ## Features
 
-### Sync screen
+The app has two pages, **Activity** and **Nutrition** (swipe or use the switcher), with a
+compact **Sync now** button in the top bar and everything else in **Settings**.
+
+### Sync
 
 | | |
 |---|---|
-| 🔁 **17 data types** | Steps, distance, active energy, floors, workouts, VO2 max, heart rate, resting heart rate, HRV, blood oxygen, respiratory rate, sleep with stages, weight, body fat, height, water, dietary energy. Each can be switched on or off. |
-| ✅ **Steps match Google exactly** | Daily step totals come from Google's own daily roll-up (the number the Google Health app shows); hourly values only spread that total across the day. *Settings → Steps check* compares the last 7 days side by side. |
-| 🧹 **No duplicates** | Every sync replaces only what the sync itself wrote in its window. Food you log and weights you enter are never touched. |
-| ⏱️ **Automatic** | Syncs when the app opens (at most every 30 min), tries in the background, and has a *Sync HealthBridge* Shortcuts action for a daily automation. Catches up per type after missed days (up to 14), or re-syncs 3–90 days on demand. |
-| 🔔 **Notifications** | When an automatic sync fails or needs a reconnect, and the day before the free-signing build expires. |
+| **17 data types** | Steps, distance, active energy, floors, workouts, VO2 max, heart rate, resting heart rate, HRV, blood oxygen, respiratory rate, sleep with stages, weight, body fat, height, water, dietary energy. Each can be switched on or off in *Settings → What to sync*. |
+| **Steps match Google exactly** | Daily step totals come from Google's own daily roll-up (the number the Google Health app shows); hourly values only spread that total across the day. *Settings → Steps check* compares the last 7 days side by side. |
+| **No duplicates** | Every sync replaces only what the sync itself wrote in its window. Food you log and weights you enter are never touched. |
+| **Automatic** | Syncs when the app opens (at most every 30 min), tries in the background, and has a *Sync HealthBridge* Shortcuts action. Catches up per type after missed days (up to 14), or re-syncs 3–90 days on demand. |
+| **Light on requests** | Steps, distance, calories and heart rate are fetched every sync; sleep, weight, body and daily metrics every 4 hours, workouts hourly (about half the API calls). A Shortcut or background run within 5 minutes of another sync is skipped. |
+| **History and notifications** | A sync log with trigger, types, records and errors. Notifications when an automatic sync fails or needs a reconnect, and the day before the free-signing build expires. |
+
+### Activity page
+
+| | |
+|---|---|
+| **Today** | Steps with a goal ring, distance, floors, and total calories burned (as Google shows it) with active calories underneath. A line shows how fresh Google's data is ("band data until 17:40"). |
+| **Trends** | Steps per day against your goal, sleep per night, resting heart rate and VO2 max, for a week, a month or 3 months. |
+| **Same numbers as Apple Health** | By default the page shows Apple Health's merged totals (all sources, de-duplicated by the Health app's source priority). Turn off *Settings → Activity like Apple Health* to see only the band's data. Sleep is always the band's only, so a night is never counted twice. |
 
 ### Nutrition screen
 
 | | |
 |---|---|
-| 📷 **Meal from a photo** | Claude (Anthropic) identifies the foods and estimates grams; calories come from the Israeli **Tzameret** database when a match is found. Review and fix before saving. |
-| ✍️ **Meal from text** | "2 slices of whole-wheat bread with hummus and a boiled egg". |
-| 🔍 **Hebrew search** | ~4,600 foods from the Ministry of Health database, offline, with household portions (unit, cup, tablespoon…). |
-| ▦ **Barcode** | Packaged foods via Open Food Facts. |
-| ⚡ **Quick entry** | Just a calorie number, also by Siri: *"Add calories in HealthBridge"*. |
-| 📅 **Any past day** | Browse, add or delete food for earlier days (never future ones). |
-| ⚖️ **Calorie balance** | Burned (Google total calories, incl. resting) vs eaten, with a daily deficit goal. Food other apps write to Apple Health is counted too. |
-| 📈 **Progress** | Weight trend with goal projection, eaten-vs-burned per day, expected vs actual weight change, weekly macro averages, each with a plain-language headline. |
+| **Meal from a photo** | Claude (Anthropic) identifies the foods and estimates grams; calories come from the Israeli **Tzameret** database when a match is found. Review and fix before saving. |
+| **Meal from text** | "2 slices of whole-wheat bread with hummus and a boiled egg". |
+| **Hebrew search** | ~4,600 foods from the Ministry of Health database, offline, with household portions (unit, cup, tablespoon…). |
+| **Barcode** | Packaged foods via Open Food Facts. |
+| **Quick entry** | Just a calorie number, also by Siri: *"Add calories in HealthBridge"*. |
+| **Any past day** | Browse, add or delete food for earlier days (never future ones). |
+| **Calorie balance** | Burned (Google total calories, incl. resting) vs eaten, with a daily deficit goal. Food other apps write to Apple Health is counted too. |
+| **Tracking start** | Food is counted from a start date you choose (*Settings → Nutrition*). From then on, a day with nothing logged counts as balanced (deficit 0), not as a day of fasting. |
+| **Progress** | Weight trend with goal projection, eaten-vs-burned per day, expected vs actual weight change, weekly macro averages. The comparison charts appear after 7 full days of tracking. |
 
 Everything logged is also written to Apple Health (energy, protein, carbs, fat).
 
@@ -155,7 +168,7 @@ You need a Mac with Xcode, an iPhone, and the Google account your band syncs to.
 
 ```bash
 brew install xcodegen
-git clone -b claude/hei-rbtxak https://github.com/yanivbahalul/fitness-google-sync.git
+git clone https://github.com/yanivbahalul/fitness-google-sync.git
 cd fitness-google-sync
 xcodegen generate
 open StepsBridge.xcodeproj
@@ -179,9 +192,15 @@ Sonnet 5.5 and Haiku 5.5 are cheaper. A Claude.ai subscription doesn't cover API
 
 ## Everyday use
 
-- **Swipe** sideways (or use the switcher) between *Sync* and *Nutrition*.
-- Opening the app syncs automatically. For a sync without opening it: **Shortcuts →
-  Automation → Time of Day → Sync HealthBridge**.
+- **Swipe** sideways (or use the switcher) between *Activity* and *Nutrition*.
+- Opening the app syncs automatically; the button in the top bar syncs on demand.
+- **Google's cloud lags behind the band.** The Google Health app shows new steps right
+  away, but they reach the Google Health API only after that app uploads them (minutes,
+  sometimes longer). The best moment to sync is just after the Google Health app has synced.
+  To do it automatically, in **Shortcuts → Automation → + → App → Google Health → Is Closed →
+  Run Immediately**, add **Wait 60 seconds** and **Sync HealthBridge**.
+- A lock-screen button: add the *Sync HealthBridge* shortcut as a Control
+  (**lock screen → Customize → Controls → Shortcut**).
 - **Weekly**: with a free Apple ID the build stops opening after 7 days. You get a
   notification the day before; connect the iPhone and press **▶︎** in Xcode. Data and the
   Google sign-in are kept. (A paid Apple Developer account extends this to a year.)
@@ -193,13 +212,16 @@ Sonnet 5.5 and Haiku 5.5 are cheaper. A Claude.ai subscription doesn't cover API
 ```
 Sources/
 ├── App/      StepsBridgeApp (entry, auto sync), AppState (shared objects, background task),
-│             ContentView (pages, sync screen), NutritionView (nutrition screen, charts),
-│             FoodEntryViews (photo/text/search/barcode/review), SettingsView (settings, history, steps check)
+│             DesignSystem (colors, spacing, shared components, chart axis),
+│             ContentView (pages, sync button, calorie card), ActivityView (activity page),
+│             NutritionView (nutrition page, charts), FoodEntryViews (photo/text/search/barcode/review),
+│             SettingsView (settings, what to sync, history, steps check)
 ├── Auth/     GoogleAuthManager (OAuth + PKCE), KeychainStore
 ├── Config/   AppConfig (OAuth client), Secrets.example.plist (optional override)
 ├── Food/     FoodDatabase + tzameret.json, FoodLog (diary ↔ Apple Health),
 │             MealAnalyzer (Claude + Open Food Facts), ProgressModel (charts data)
-├── Health/   GoogleHealthClient (API calls), HealthKitWriter (replace-in-window writes)
+├── Health/   GoogleHealthClient (API calls), HealthKitWriter (replace-in-window writes,
+│             one shared Apple Health permission request)
 └── Sync/     SyncCatalog (Google → HealthKit mapping), SyncCoordinator, SyncIntent (Siri/Shortcuts),
               SyncHistory, Notifier
 docs/         GitHub Pages: home page, privacy policy, Search Console verification
@@ -248,6 +270,14 @@ Then trust the certificate under General → VPN & Device Management.
 
 "No permission": disconnect and connect Google again, allowing every scope. Otherwise open
 the sync log (clock icon) to see which types failed.
+</details>
+
+<details>
+<summary><b>HealthBridge shows fewer steps than the Google Health app</b></summary>
+
+Google's cloud hasn't received the latest data yet; the "band data until" line on the
+Activity page shows how far it goes. Open the Google Health app, wait until it finishes
+syncing, then sync HealthBridge (or use the automation above).
 </details>
 
 <details>
