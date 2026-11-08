@@ -11,6 +11,8 @@ struct SettingsView: View {
     @AppStorage(AppSettings.notifyProblemsKey) private var notifyProblems = true
     @AppStorage(AppSettings.expiryReminderKey) private var expiryReminder = true
     @AppStorage(AppSettings.deficitGoalKey) private var deficitGoal = 500
+    @State private var trackingStartChanged = false
+    @ObservedObject private var food = FoodLog.shared
     @AppStorage(MealModel.settingsKey) private var mealModel = MealModel.opus.rawValue
     @State private var apiKey = AnthropicKeyStore.key ?? ""
     @State private var keySaved = AnthropicKeyStore.key != nil
@@ -58,6 +60,21 @@ struct SettingsView: View {
                             Text("\(deficitGoal.formatted()) קק\"ל")
                                 .monospacedDigit()
                                 .foregroundStyle(.secondary)
+                        }
+                    }
+                    DatePicker(selection: Binding(
+                        get: { AppSettings.foodTrackingStart },
+                        set: { AppSettings.foodTrackingStart = $0; trackingStartChanged.toggle() }
+                    ), in: ...Date(), displayedComponents: .date) {
+                        SettingLabel("סופרים אוכל החל מ", symbol: "calendar", color: .teal)
+                    }
+                    .id(trackingStartChanged)
+                    let oldImports = FoodLog.shared.importedEntries(before: AppSettings.foodTrackingStart).count
+                    if oldImports > 0 {
+                        Button(role: .destructive) {
+                            Task { await FoodLog.shared.deleteImported(before: AppSettings.foodTrackingStart) }
+                        } label: {
+                            Label("מחק \(oldImports) רשומות Cali ישנות", systemImage: "trash")
                         }
                     }
                 } header: {

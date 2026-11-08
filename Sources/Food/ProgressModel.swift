@@ -119,10 +119,11 @@ final class ProgressModel: ObservableObject {
             let t = eatenTotals[day] ?? (0, 0, 0, 0)
             eatenTotals[day] = (t.kcal + kcal, t.protein, t.carbs, t.fat)
         }
+        let foodStart = AppSettings.foodTrackingStart
         var days: [DayBalance] = []
         for offset in 0..<range.rawValue {
             let day = calendar.date(byAdding: .day, value: offset, to: start)!
-            guard day < today else { continue }  // today is incomplete
+            guard day < today, day >= foodStart else { continue }  // today is incomplete
             let eaten = eatenTotals[day]?.kcal ?? 0
             guard eaten > 0, let b = burned[day], b > 0 else { continue }
             days.append(DayBalance(day: day, eaten: eaten, burned: b))
@@ -131,13 +132,14 @@ final class ProgressModel: ObservableObject {
 
         // Expected (from cumulative deficit) vs actual weight change, both in kg.
         var points: [ComparePoint] = []
-        if let base = trend.first {
+        // Both start at the food tracking start date (weight trend at that point = 0).
+        if !days.isEmpty, let base = trend.last(where: { $0.date <= foodStart.addingTimeInterval(86400) }) ?? trend.first {
             var cumulative = 0.0
             for b in days where b.day >= calendar.startOfDay(for: base.date) {
                 cumulative += b.deficit
                 points.append(ComparePoint(day: b.day, series: "צפוי לפי המאזן", kg: -cumulative / Self.kcalPerKg))
             }
-            for p in trend {
+            for p in trend where p.date >= base.date {
                 points.append(ComparePoint(day: p.date, series: "בפועל", kg: p.kg - base.kg))
             }
         }
@@ -145,6 +147,7 @@ final class ProgressModel: ObservableObject {
 
         // 7-day macro averages over days with logged food.
         let last7 = (1...7).compactMap { calendar.date(byAdding: .day, value: -$0, to: today) }
+            .filter { $0 >= foodStart }
             .compactMap { eatenTotals[$0] }
         if !last7.isEmpty {
             let n = Double(last7.count)

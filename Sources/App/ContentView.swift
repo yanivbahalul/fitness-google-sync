@@ -4,7 +4,7 @@ struct ContentView: View {
     @EnvironmentObject private var auth: GoogleAuthManager
     @State private var showSettings = false
     @State private var showHistory = false
-    /// 0 = sync, 1 = nutrition. Swipe sideways or tap the picker to switch.
+    /// 0 = sync, 1 = activity, 2 = nutrition. Swipe sideways or tap the picker to switch.
     @AppStorage("selectedPage") private var page = 0
 
     var body: some View {
@@ -12,7 +12,8 @@ struct ContentView: View {
             VStack(spacing: 0) {
                 Picker("מסך", selection: $page) {
                     Label("סנכרון", systemImage: "arrow.triangle.2.circlepath").tag(0)
-                    Label("תזונה", systemImage: "fork.knife").tag(1)
+                    Label("פעילות", systemImage: "figure.walk").tag(1)
+                    Label("תזונה", systemImage: "fork.knife").tag(2)
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal, 16)
@@ -20,7 +21,8 @@ struct ContentView: View {
 
                 TabView(selection: $page) {
                     SyncPage().tag(0)
-                    NutritionPage().tag(1)
+                    ActivityPage().tag(1)
+                    NutritionPage().tag(2)
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
             }

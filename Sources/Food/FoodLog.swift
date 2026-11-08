@@ -151,7 +151,19 @@ final class FoodLog: ObservableObject {
         return result
     }
 
-    func delete(_ entry: FoodEntry) async {
+    /// Entries imported from Cali before `date`.
+    func importedEntries(before date: Date) -> [FoodEntry] {
+        entries.filter { $0.source == .cali && $0.date < date }
+    }
+
+    /// Deletes Cali-imported entries before `date` from the diary and Apple Health.
+    func deleteImported(before date: Date) async {
+        for entry in importedEntries(before: date) {
+            await delete(entry)
+        }
+    }
+
+        func delete(_ entry: FoodEntry) async {
         entries.removeAll { $0.id == entry.id }
         save()
         do {
