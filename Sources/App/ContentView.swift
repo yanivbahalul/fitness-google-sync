@@ -16,7 +16,7 @@ struct ContentView: View {
                     Label("תזונה", systemImage: "fork.knife").tag(2)
                 }
                 .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
+                .padding(.horizontal, DS.pagePadding)
                 .padding(.vertical, 8)
 
                 TabView(selection: $page) {
@@ -26,7 +26,7 @@ struct ContentView: View {
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
             }
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .pageBackground()
             .navigationTitle("HealthBridge")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -46,8 +46,7 @@ struct ContentView: View {
             .sheet(isPresented: $showSettings) { SettingsView() }
             .sheet(isPresented: $showHistory) { HistoryView() }
         }
-        .environment(\.layoutDirection, .rightToLeft)
-        .environment(\.locale, .he)
+        .appChrome()
     }
 }
 
@@ -57,7 +56,7 @@ private struct SyncPage: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
+            VStack(spacing: DS.cardSpacing) {
                 if auth.isSignedIn {
                     SyncCard()
                     ForEach(SyncCategory.allCases) { category in
@@ -67,89 +66,9 @@ private struct SyncPage: View {
                     ConnectCard()
                 }
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, DS.pagePadding)
             .padding(.bottom, 24)
         }
-    }
-}
-
-// MARK: - Theme
-
-extension SyncCategory {
-    var color: Color {
-        switch self {
-        case .activity: return .orange
-        case .heart: return .red
-        case .sleep: return .indigo
-        case .body: return .purple
-        case .nutrition: return .teal
-        }
-    }
-}
-
-enum Theme {
-    /// Same blue → pink as the app icon (Google Health half → Apple Health half).
-    static let blue = Color(red: 0.20, green: 0.52, blue: 1.0)
-    static let pink = Color(red: 1.0, green: 0.30, blue: 0.42)
-    static let gradient = LinearGradient(colors: [blue, pink], startPoint: .leading, endPoint: .trailing)
-}
-
-struct Card<Content: View>: View {
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) { content }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-    }
-}
-
-/// Calm icon: the symbol in the accent color on a faint tint (used on the sync page).
-struct SoftIcon: View {
-    let symbol: String
-    var size: CGFloat = 32
-
-    var body: some View {
-        Image(systemName: symbol)
-            .font(.system(size: size * 0.45, weight: .semibold))
-            .foregroundStyle(Theme.blue)
-            .frame(width: size, height: size)
-            .background(Theme.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: size * 0.28, style: .continuous))
-            .accessibilityHidden(true)
-    }
-}
-
-/// SF Symbol on a tinted rounded square, like the Health app.
-struct IconBadge: View {
-    let symbol: String
-    let color: Color
-    var size: CGFloat = 32
-
-    var body: some View {
-        Image(systemName: symbol)
-            .font(.system(size: size * 0.5, weight: .semibold))
-            .foregroundStyle(.white)
-            .frame(width: size, height: size)
-            .background(color.gradient, in: RoundedRectangle(cornerRadius: size * 0.28, style: .continuous))
-            .accessibilityHidden(true)
-    }
-}
-
-struct Notice: View {
-    let symbol: String
-    let color: Color
-    let text: String
-
-    var body: some View {
-        Label {
-            Text(text).font(.footnote)
-        } icon: {
-            Image(systemName: symbol).foregroundStyle(color)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
@@ -160,17 +79,12 @@ private struct ConnectCard: View {
 
     var body: some View {
         Card {
+            CardHeader(title: "חיבור ל‑Google Health", symbol: "person.crop.circle.badge.checkmark")
             Text("כדי להתחיל, התחבר לחשבון Google שאליו הצמיד מסונכרן.")
                 .font(.body)
-            Button {
+            PrimaryButton(title: "התחבר ל‑Google Health") {
                 Task { await auth.signIn() }
-            } label: {
-                Label("התחבר ל‑Google Health", systemImage: "person.crop.circle.badge.checkmark")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity, minHeight: 50)
             }
-            .buttonStyle(.borderedProminent)
-            .buttonBorderShape(.roundedRectangle(radius: 14))
             if let error = auth.lastError {
                 Text(error).font(.footnote).foregroundStyle(.red)
             }
@@ -208,7 +122,7 @@ private struct SyncCard: View {
                 }
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity, minHeight: 100)
-                .background(Theme.blue, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .background(Theme.accent, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .opacity(sync.enabledCount == 0 ? 0.5 : 1)
             }
             .buttonStyle(.plain)
@@ -271,16 +185,15 @@ struct EnergyCard: View {
     var body: some View {
         let eaten = Int(safe: food.total(on: day).rounded()) + otherApps
         Card {
-            HStack {
-                Label(isToday ? "מאזן קלורי היום" : "מאזן קלורי", systemImage: "chart.bar.xaxis")
-                    .font(.headline)
-                Spacer()
+            CardHeader(title: isToday ? "מאזן קלורי היום" : "מאזן קלורי", symbol: "chart.bar.xaxis") {
                 if loadingBurned { ProgressView() }
             }
 
-            HStack(spacing: 10) {
-                EnergyTile(title: isToday ? "נשרפו עד עכשיו" : "נשרפו", value: burned, symbol: "flame.fill", color: .orange)
-                EnergyTile(title: otherApps > 0 ? "נאכלו (כולל Cali)" : "נאכלו", value: eaten, symbol: "fork.knife", color: .teal)
+            HStack(spacing: 8) {
+                StatTile(title: isToday ? "נשרפו עד עכשיו (קק\"ל)" : "נשרפו (קק\"ל)",
+                         value: burned.map { $0.formatted() } ?? "—", symbol: "flame.fill")
+                StatTile(title: otherApps > 0 ? "נאכלו, כולל Cali (קק\"ל)" : "נאכלו (קק\"ל)",
+                         value: eaten.formatted(), symbol: "fork.knife")
             }
 
             if let burned {
@@ -296,7 +209,7 @@ struct EnergyCard: View {
                             .monospacedDigit()
                     }
                     ProgressView(value: Double(max(0, min(deficit, goal))), total: Double(max(goal, 1)))
-                        .tint(reached ? .green : Theme.blue)
+                        .tint(Theme.accent)
                     Text(reached
                          ? "הגעת ליעד הגרעון היומי (\(goal.formatted()) קק\"ל)"
                          : "יעד: \(goal.formatted()) קק\"ל גרעון · נשארו \(max(0, goal - deficit).formatted())")
@@ -316,42 +229,6 @@ struct EnergyCard: View {
             burned = await sync.burned(on: day)
             loadingBurned = false
         }
-    }
-}
-
-private struct EnergyTile: View {
-    let title: String
-    let value: Int?
-    let symbol: String
-    let color: Color
-    var badge: String? = nil
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Image(systemName: symbol)
-                    .foregroundStyle(color)
-                Spacer()
-                if let badge {
-                    Image(systemName: badge)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .accessibilityHidden(true)
-            Text(value.map { $0.formatted() } ?? "—")
-                .font(.title2.bold())
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            Text("\(title) (קק\"ל)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(color.opacity(0.10), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .accessibilityElement(children: .combine)
     }
 }
 
@@ -381,14 +258,13 @@ private struct CategoryCard: View {
                     }
                 }
             }
-            .tint(Theme.blue)
             .accessibilityLabel("\(category.title), הכול")
             .accessibilityValue("\(onCount) מתוך \(items.count) פעילים")
 
             if items.count > 1 || items.first?.name != category.title {
                 Divider()
                 ForEach(items) { item in
-                    ItemRow(item: item, color: category.color)
+                    ItemRow(item: item)
                 }
             } else if let item = items.first, let status = sync.status(for: item) {
                 HStack { StatusIcon(status: status); Text(status.text).font(.caption).foregroundStyle(.secondary) }
@@ -401,7 +277,6 @@ private struct CategoryCard: View {
 private struct ItemRow: View {
     @EnvironmentObject private var sync: SyncCoordinator
     let item: SyncItem
-    let color: Color
 
     var body: some View {
         Toggle(isOn: Binding(
@@ -420,7 +295,6 @@ private struct ItemRow: View {
                 StatusIcon(status: sync.status(for: item))
             }
         }
-        .tint(Theme.blue)
         .frame(minHeight: 44)
     }
 }

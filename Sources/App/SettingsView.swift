@@ -159,7 +159,7 @@ struct SettingsView: View {
                 }
             }
         }
-        .environment(\.layoutDirection, .rightToLeft)
+        .appChrome()
     }
 }
 
@@ -176,7 +176,7 @@ private struct SettingLabel: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            IconBadge(symbol: symbol, color: color, size: 28)
+            SoftIcon(symbol: symbol, size: 28)
             Text(title)
         }
     }
@@ -201,9 +201,7 @@ struct HistoryView: View {
                 } else {
                     List(sync.history) { entry in
                         HStack(alignment: .top, spacing: 12) {
-                            IconBadge(symbol: entry.trigger.symbol,
-                                      color: entry.failedTypes.isEmpty ? .green : (entry.syncedTypes == 0 ? .red : .orange),
-                                      size: 32)
+                            SoftIcon(symbol: entry.trigger.symbol, size: 32)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(entry.date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, locale: .he)))
                                     .font(.body.weight(.semibold))
@@ -230,7 +228,7 @@ struct HistoryView: View {
                 }
             }
         }
-        .environment(\.layoutDirection, .rightToLeft)
+        .appChrome()
     }
 }
 
@@ -259,9 +257,9 @@ struct StepsCheckView: View {
                                     .accessibilityLabel(row.matches ? "תואם" : "לא תואם")
                             }
                             HStack(spacing: 8) {
-                                NumberTile(title: "Google", value: row.google, color: Theme.blue)
-                                NumberTile(title: "HealthBridge", value: row.stepsBridge, color: row.matches ? .green : .orange)
-                                NumberTile(title: "Apple Health", value: row.appleHealth, color: Theme.pink)
+                                StatTile(title: "Google", value: row.google.formatted())
+                                StatTile(title: "HealthBridge", value: row.stepsBridge.formatted())
+                                StatTile(title: "Apple Health", value: row.appleHealth.formatted())
                             }
                         }
                         .padding(.vertical, 4)
@@ -304,25 +302,3 @@ struct StepsCheckView: View {
     }
 }
 
-private struct NumberTile: View {
-    let title: String
-    let value: Int
-    let color: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(value.formatted())
-                .font(.headline)
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            Text(title)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
-        .padding(8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-    }
-}

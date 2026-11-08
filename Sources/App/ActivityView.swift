@@ -144,7 +144,7 @@ struct ActivityPage: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
+            VStack(spacing: DS.cardSpacing) {
                 TodayStepsCard(model: model, goal: stepGoal)
                 Picker("תקופה", selection: $model.range) {
                     ForEach(ActivityModel.Range.allCases) { Text($0.title).tag($0) }
@@ -154,39 +154,13 @@ struct ActivityPage: View {
                 SleepCard(model: model)
                 HeartCard(model: model)
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, DS.pagePadding)
             .padding(.bottom, 24)
         }
         .task { await model.refresh() }
         .refreshable { await model.refresh() }
         .onChange(of: model.range) { _ in Task { await model.refresh() } }
         .onChange(of: sync.lastSyncDate) { _ in Task { await model.refresh() } }
-    }
-}
-
-private struct MetricTile: View {
-    let title: String
-    let value: String
-    let symbol: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Image(systemName: symbol)
-                .foregroundStyle(Theme.blue)
-                .accessibilityHidden(true)
-            Text(value)
-                .font(.title3.bold())
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .accessibilityElement(children: .combine)
     }
 }
 
@@ -200,14 +174,14 @@ private struct TodayStepsCard: View {
         Card {
             HStack(spacing: 16) {
                 ZStack {
-                    Circle().stroke(Theme.blue.opacity(0.15), lineWidth: 12)
+                    Circle().stroke(Theme.accent.opacity(0.15), lineWidth: 12)
                     Circle()
                         .trim(from: 0, to: fraction)
-                        .stroke(Theme.blue, style: StrokeStyle(lineWidth: 12, lineCap: .round))
+                        .stroke(Theme.accent, style: StrokeStyle(lineWidth: 12, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                     Image(systemName: "figure.walk")
                         .font(.title2)
-                        .foregroundStyle(Theme.blue)
+                        .foregroundStyle(Theme.accent)
                 }
                 .frame(width: 92, height: 92)
                 .accessibilityHidden(true)
@@ -230,9 +204,9 @@ private struct TodayStepsCard: View {
             .accessibilityElement(children: .combine)
 
             HStack(spacing: 8) {
-                MetricTile(title: "ק״מ", value: String(format: "%.1f", model.today(model.distanceKm)), symbol: "map.fill")
-                MetricTile(title: "קלוריות פעילות", value: Int(safe: model.today(model.activeKcal)).formatted(), symbol: "flame.fill")
-                MetricTile(title: "קומות", value: Int(safe: model.today(model.floors)).formatted(), symbol: "figure.stairs")
+                StatTile(title: "ק״מ", value: String(format: "%.1f", model.today(model.distanceKm)), symbol: "map.fill")
+                StatTile(title: "קלוריות פעילות", value: Int(safe: model.today(model.activeKcal)).formatted(), symbol: "flame.fill")
+                StatTile(title: "קומות", value: Int(safe: model.today(model.floors)).formatted(), symbol: "figure.stairs")
             }
             Text("הנתונים מתעדכנים בכל סנכרון.")
                 .font(.caption)
@@ -250,9 +224,7 @@ private struct StepsTrendCard: View {
         let past = model.steps.filter { !Calendar.current.isDateInToday($0.day) }
         let reached = past.filter { $0.value >= Double(goal) }.count
         Card {
-            Label("צעדים", systemImage: "figure.walk")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
+            CardHeader(title: "צעדים", symbol: "figure.walk")
             if model.steps.isEmpty {
                 Text("אין עדיין נתוני צעדים. סנכרן כדי לטעון אותם.")
                     .foregroundStyle(.secondary)
@@ -267,12 +239,12 @@ private struct StepsTrendCard: View {
                 Chart {
                     ForEach(model.steps) { d in
                         BarMark(x: .value("יום", d.day, unit: .day), y: .value("צעדים", d.value))
-                            .foregroundStyle(d.value >= Double(goal) ? Theme.blue : Theme.blue.opacity(0.45))
+                            .foregroundStyle(d.value >= Double(goal) ? Theme.accent : Theme.accent.opacity(0.45))
                             .cornerRadius(3)
                     }
                     RuleMark(y: .value("יעד", goal))
                         .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 4]))
-                        .foregroundStyle(Color.green)
+                        .foregroundStyle(ChartColors.reference)
                     if let selected {
                         RuleMark(x: .value("יום", selected.day, unit: .day))
                             .foregroundStyle(Color.secondary.opacity(0.3))
@@ -298,7 +270,7 @@ private struct StepsTrendCard: View {
                 .frame(height: 200)
                 .environment(\.layoutDirection, .leftToRight)
                 .chartOverlay { proxy in
-                    DaySelectionOverlay(proxy: proxy) { date in
+                    SelectionOverlay(proxy: proxy) { date in
                         selected = model.steps.min { abs($0.day.timeIntervalSince(date)) < abs($1.day.timeIntervalSince(date)) }
                     } onEnd: { selected = nil }
                 }
@@ -321,9 +293,7 @@ private struct SleepCard: View {
 
     var body: some View {
         Card {
-            Label("שינה", systemImage: "bed.double.fill")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
+            CardHeader(title: "שינה", symbol: "bed.double.fill")
             if model.sleepHours.isEmpty {
                 Text("אין עדיין נתוני שינה.").foregroundStyle(.secondary)
             } else {
@@ -341,7 +311,7 @@ private struct SleepCard: View {
                 }
                 Chart(model.sleepHours) { d in
                     BarMark(x: .value("לילה", d.day, unit: .day), y: .value("שעות", d.value))
-                        .foregroundStyle(Theme.blue)
+                        .foregroundStyle(Theme.accent)
                         .cornerRadius(3)
                 }
                 .chartYAxis {
@@ -372,15 +342,13 @@ private struct HeartCard: View {
 
     var body: some View {
         Card {
-            Label("לב וכושר", systemImage: "heart.fill")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
+            CardHeader(title: "לב וכושר", symbol: "heart.fill")
             HStack(spacing: 8) {
-                MetricTile(title: "דופק במנוחה", value: model.restingHR.last.map { "\(Int(safe: $0.value))" } ?? "—",
+                StatTile(title: "דופק במנוחה", value: model.restingHR.last.map { "\(Int(safe: $0.value))" } ?? "—",
                            symbol: "heart.fill")
-                MetricTile(title: "ממוצע בתקופה", value: model.average(model.restingHR).map { "\(Int(safe: $0))" } ?? "—",
+                StatTile(title: "ממוצע בתקופה", value: model.average(model.restingHR).map { "\(Int(safe: $0))" } ?? "—",
                            symbol: "waveform.path.ecg")
-                MetricTile(title: "VO2 Max", value: model.vo2Max.map { String(format: "%.0f", $0) } ?? "—",
+                StatTile(title: "VO2 Max", value: model.vo2Max.map { String(format: "%.0f", $0) } ?? "—",
                            symbol: "lungs.fill")
             }
             if model.restingHR.count >= 2 {
@@ -392,7 +360,7 @@ private struct HeartCard: View {
                 }
                 Chart(model.restingHR) { d in
                     LineMark(x: .value("יום", d.day), y: .value("דופק", d.value))
-                        .foregroundStyle(Theme.blue)
+                        .foregroundStyle(Theme.accent)
                         .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round))
                         .interpolationMethod(.monotone)
                 }
@@ -415,39 +383,6 @@ private struct HeartCard: View {
                 .accessibilityElement()
                 .accessibilityLabel("גרף דופק במנוחה")
             }
-        }
-    }
-}
-
-private struct ValueBubble: View {
-    let title: String
-    let value: String
-
-    var body: some View {
-        VStack(spacing: 2) {
-            Text(value).font(.caption.weight(.semibold)).monospacedDigit()
-            Text(title).font(.caption2).foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-    }
-}
-
-private struct DaySelectionOverlay: View {
-    let proxy: ChartProxy
-    let onSelect: (Date) -> Void
-    let onEnd: () -> Void
-
-    var body: some View {
-        GeometryReader { geo in
-            Rectangle().fill(.clear).contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        let origin = geo[proxy.plotAreaFrame].origin
-                        if let date: Date = proxy.value(atX: value.location.x - origin.x) { onSelect(date) }
-                    }
-                    .onEnded { _ in onEnd() })
         }
     }
 }
