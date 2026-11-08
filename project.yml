@@ -22,12 +22,25 @@ targets:
     info:
       path: Sources/App/Info.plist
       properties:
-        CFBundleDisplayName: StepsBridge
+        CFBundleDisplayName: HealthBridge
         CFBundleShortVersionString: "1.0"
         CFBundleVersionString: "1"
         UILaunchScreen: {}
-        NSHealthShareUsageDescription: "StepsBridge reads your existing step data so it won't create duplicate entries when writing synced steps."
-        NSHealthUpdateUsageDescription: "StepsBridge writes step counts pulled from your Google Health account into Health."
+        NSCameraUsageDescription: "HealthBridge uses the camera to photograph meals and scan food barcodes."
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIRequiresFullScreen: true
+        UIBackgroundModes:
+          - fetch
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.yanivbahalul.stepsbridge.refresh
+        NSHealthShareUsageDescription: "HealthBridge only manages the data it wrote itself, so re-syncing never creates duplicates."
+        NSHealthUpdateUsageDescription: "HealthBridge writes your Google Health data (activity, heart, sleep, body measurements, workouts, nutrition) into Health."
         CFBundleURLTypes:
           - CFBundleURLSchemes:
               - $(GOOGLE_OAUTH_REDIRECT_SCHEME)
@@ -38,4 +51,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.yanivbahalul.stepsbridge
-        GOOGLE_OAUTH_REDIRECT_SCHEME: com.yanivbahalul.stepsbridge
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        DEVELOPMENT_TEAM: P23HG4TNGU
+        CODE_SIGN_STYLE: Automatic
+        GOOGLE_OAUTH_REDIRECT_SCHEME: com.googleusercontent.apps.84175655883-g6tnujthm7282dthp53sbljc4udstrqm

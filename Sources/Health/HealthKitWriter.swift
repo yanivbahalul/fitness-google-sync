@@ -1,64 +1,113 @@
 import Foundation
 import HealthKit
 
-/// Writes daily step counts into Apple Health, tagged with a metadata key so
-/// re-running a sync for the same day updates rather than duplicates the entry.
+/// Writes synced data into Apple Health.
+///
+/// Every sync replaces what this app previously wrote for the sync window: for each
+/// type it deletes this app's own samples (HealthKit only lets an app delete what it
+/// wrote) starting at the window start, then saves the fresh samples. Re-syncing
+/// therefore never duplicates data.
 final class HealthKitWriter {
-    private let store = HKHealthStore()
-    private let stepType = HKQuantityType.quantityType(forIdentifier: .stepCount)!
-    private let sourceTag = "StepsBridge.googleHealthDailyTotal"
+    let store = HKHealthStore()
+    static let metadataKey = "StepsBridge.googleHealth"
 
-    func requestAuthorization() async throws {
+    func requestAuthorization(toShare types: Set<HKSampleType>, read: Set<HKObjectType> = []) async throws {
         guard HKHealthStore.isHealthDataAvailable() else {
             throw HealthKitWriterError.notAvailable
         }
-        try await store.requestAuthorization(toShare: [stepType], read: [stepType])
+        try await store.requestAuthorization(toShare: types, read: read)
     }
 
-    /// Writes one cumulative step sample per day, replacing any sample this
-    /// app previously wrote for that same day.
-    func write(_ days: [DailySteps]) async throws {
-        for day in days {
-            try await replaceSample(for: day)
+    /// Daily step totals in Apple Health from `start` (local midnight) for `days` days.
+    /// `onlyThisApp`: only what HealthBridge wrote; otherwise Apple Health's merged total
+    /// (the number the Health app shows, after its source-priority de-duplication).
+    func dailySteps(from start: Date, days: Int, onlyThisApp: Bool) async throws -> [Date: Double] {
+        let type = HKQuantityType(.stepCount)
+        let calendar = Calendar.current
+        let end = calendar.date(byAdding: .day, value: days, to: start)!
+        var predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
+        if onlyThisApp {
+            predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+                predicate, HKQuery.predicateForObjects(from: HKSource.default()),
+            ])
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKStatisticsCollectionQuery(
+                quantityType: type, quantitySamplePredicate: predicate,
+                options: .cumulativeSum, anchorDate: start, intervalComponents: DateComponents(day: 1))
+            query.initialResultsHandler = { _, collection, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                var totals: [Date: Double] = [:]
+                collection?.enumerateStatistics(from: start, to: end) { stats, _ in
+                    totals[stats.startDate] = stats.sumQuantity()?.doubleValue(for: .count()) ?? 0
+                }
+                continuation.resume(returning: totals)
+            }
+            store.execute(query)
         }
     }
 
-    private func replaceSample(for day: DailySteps) async throws {
-        let calendar = Calendar(identifier: .gregorian)
-        let startOfDay = calendar.startOfDay(for: day.day)
-        guard let endOfDay = calendar.date(byAdding: .day, value: 1, to: startOfDay) else { return }
-
-        try await deleteExistingSample(start: startOfDay, end: endOfDay)
-
-        let quantity = HKQuantity(unit: .count(), doubleValue: Double(day.stepCount))
-        let sample = HKQuantitySample(
-            type: stepType,
-            quantity: quantity,
-            start: startOfDay,
-            end: endOfDay,
-            metadata: [sourceTag: true]
-        )
-        try await store.save(sample)
-    }
-
-    private func deleteExistingSample(start: Date, end: Date) async throws {
-        let dayPredicate = HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate)
-        let sourcePredicate = HKQuery.predicateForObjects(withMetadataKey: sourceTag)
-        let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [dayPredicate, sourcePredicate])
-
-        let existing: [HKSample] = try await withCheckedThrowingContinuation { continuation in
-            let query = HKSampleQuery(sampleType: stepType, predicate: predicate, limit: HKObjectQueryNoLimit, sortDescriptors: nil) { _, samples, error in
-                if let error {
+    /// Today's total of a cumulative type across all sources (e.g. food logged in a
+    /// calorie-tracking app), using Apple Health's source-priority de-duplication.
+    func todayTotal(_ id: HKQuantityTypeIdentifier, unit: HKUnit) async throws -> Double {
+        let type = HKQuantityType(id)
+        let start = Calendar.current.startOfDay(for: Date())
+        let predicate = HKQuery.predicateForSamples(withStart: start, end: nil, options: .strictStartDate)
+        return try await withCheckedThrowingContinuation { continuation in
+            let query = HKStatisticsQuery(quantityType: type, quantitySamplePredicate: predicate,
+                                          options: .cumulativeSum) { _, stats, error in
+                if let error = error as? HKError, error.code == .errorNoData {
+                    continuation.resume(returning: 0)
+                } else if let error {
                     continuation.resume(throwing: error)
                 } else {
-                    continuation.resume(returning: samples ?? [])
+                    continuation.resume(returning: stats?.sumQuantity()?.doubleValue(for: unit) ?? 0)
                 }
             }
             store.execute(query)
         }
+    }
 
-        guard !existing.isEmpty else { return }
-        try await store.delete(existing)
+    /// Replaces this app's samples of `type` that start on/after `since` with `samples`.
+    /// Returns how many samples were written.
+    @discardableResult
+    func replace(_ type: HKSampleType, since: Date, with samples: [HKSample]) async throws -> Int {
+        // Only samples the sync itself wrote (tagged with metadataKey) - never meals logged
+        // in the food diary or imported weights, which this app also writes.
+        let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
+            HKQuery.predicateForObjects(from: HKSource.default()),
+            HKQuery.predicateForObjects(withMetadataKey: Self.metadataKey),
+            HKQuery.predicateForSamples(withStart: since, end: nil, options: .strictStartDate),
+        ])
+        try await deleteObjects(of: type, matching: predicate)
+
+        // Save in chunks to keep individual HealthKit transactions small.
+        let chunkSize = 2000
+        var index = 0
+        while index < samples.count {
+            let chunk = Array(samples[index..<min(index + chunkSize, samples.count)])
+            try await store.save(chunk)
+            index += chunkSize
+        }
+        return samples.count
+    }
+
+    private func deleteObjects(of type: HKObjectType, matching predicate: NSPredicate) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            store.deleteObjects(of: type, predicate: predicate) { _, _, error in
+                // "No data" is reported as an error by some iOS versions; ignore it.
+                if let error = error as? HKError, error.code == .errorNoData {
+                    continuation.resume()
+                } else if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
     }
 }
 

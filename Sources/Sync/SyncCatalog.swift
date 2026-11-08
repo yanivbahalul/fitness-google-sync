@@ -1,0 +1,389 @@
+import Foundation
+import HealthKit
+
+/// Groups shown as cards in the UI.
+enum SyncCategory: String, CaseIterable, Identifiable {
+    case activity, heart, sleep, body, nutrition
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .activity: return "פעילות"
+        case .heart: return "לב ונשימה"
+        case .sleep: return "שינה"
+        case .body: return "מדדי גוף"
+        case .nutrition: return "תזונה"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .activity: return "flame.fill"
+        case .heart: return "heart.fill"
+        case .sleep: return "bed.double.fill"
+        case .body: return "figure.stand"
+        case .nutrition: return "fork.knife"
+        }
+    }
+}
+
+/// One Google Health data type → one Apple Health type.
+struct SyncItem: Identifiable {
+    let name: String
+    let hkType: HKSampleType
+    /// Fetches from Google Health and converts to HealthKit samples starting at/after `since`.
+    let fetch: (_ client: GoogleHealthClient, _ since: Date, _ now: Date) async throws -> [HKSample]
+    var category: SyncCategory = .activity
+    var symbol: String = "circle"
+
+    /// Stable id (the HealthKit type identifier), used to remember selections.
+    var id: String { hkType.identifier }
+
+    func tagged(_ category: SyncCategory, _ symbol: String) -> SyncItem {
+        var copy = self
+        copy.category = category
+        copy.symbol = symbol
+        return copy
+    }
+}
+
+/// Everything HealthBridge syncs. Field names follow the Google Health API v4 reference
+/// (users.dataTypes.dataPoints). Each item syncs independently, so one failing type
+/// (e.g. a scope you didn't grant) doesn't stop the rest.
+enum SyncCatalog {
+    static let meta: [String: Any] = [HealthKitWriter.metadataKey: true]
+
+    static var all: [SyncItem] {
+        [
+            // MARK: activity_and_fitness
+            steps.tagged(.activity, "figure.walk"),
+            intervalSum(name: "מרחק", dataType: "distance", key: "distance", field: "millimeters",
+                        hk: .distanceWalkingRunning, unit: .meter(), scale: 0.001).tagged(.activity, "map.fill"),
+            intervalSum(name: "קלוריות פעילות", dataType: "active-energy-burned", key: "activeEnergyBurned", field: "kcal",
+                        hk: .activeEnergyBurned, unit: .kilocalorie()).tagged(.activity, "flame.fill"),
+            dailyRollUp(name: "קומות", dataType: "floors", valueKey: "floors",
+                        hk: .flightsClimbed, unit: .count()).tagged(.activity, "figure.stairs"),
+            samples(name: "VO2 Max", dataType: "vo2-max", key: "vo2Max", field: "vo2Max",
+                    hk: .vo2Max, unit: HKUnit(from: "ml/kg*min")).tagged(.activity, "lungs.fill"),
+            workouts.tagged(.activity, "figure.run"),
+
+            // MARK: health_metrics_and_measurements
+            heartRate.tagged(.heart, "heart.fill"),
+            daily(name: "דופק במנוחה", dataType: "daily-resting-heart-rate", key: "dailyRestingHeartRate",
+                  field: "beatsPerMinute", hk: .restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute())).tagged(.heart, "heart.text.square.fill"),
+            // Apple Health stores HRV as SDNN; only write it when Google provides the SDNN value.
+            samples(name: "HRV", dataType: "heart-rate-variability", key: "heartRateVariability",
+                    field: "standardDeviationMilliseconds", hk: .heartRateVariabilitySDNN, unit: .secondUnit(with: .milli)).tagged(.heart, "waveform.path.ecg"),
+            samples(name: "חמצן בדם", dataType: "oxygen-saturation", key: "oxygenSaturation", field: "percentage",
+                    hk: .oxygenSaturation, unit: .percent(), scale: 0.01).tagged(.heart, "drop.fill"),
+            daily(name: "קצב נשימה", dataType: "daily-respiratory-rate", key: "dailyRespiratoryRate",
+                  field: "breathsPerMinute", hk: .respiratoryRate, unit: HKUnit.count().unitDivided(by: .minute())).tagged(.heart, "wind"),
+            samples(name: "משקל", dataType: "weight", key: "weight", field: "weightGrams",
+                    hk: .bodyMass, unit: .gram()).tagged(.body, "scalemass.fill"),
+            samples(name: "אחוז שומן", dataType: "body-fat", key: "bodyFat", field: "percentage",
+                    hk: .bodyFatPercentage, unit: .percent(), scale: 0.01).tagged(.body, "percent"),
+            samples(name: "גובה", dataType: "height", key: "height", field: "heightMillimeters",
+                    hk: .height, unit: .meter(), scale: 0.001).tagged(.body, "ruler.fill"),
+
+            // MARK: sleep
+            sleep.tagged(.sleep, "bed.double.fill"),
+
+            // MARK: nutrition
+            intervalSum(name: "שתייה", dataType: "hydration-log", key: "hydrationLog", field: "amountConsumed.milliliters",
+                        hk: .dietaryWater, unit: .literUnit(with: .milli), hourly: false).tagged(.nutrition, "waterbottle.fill"),
+            intervalSum(name: "קלוריות מתזונה", dataType: "nutrition-log", key: "nutritionLog", field: "energy.kcal",
+                        hk: .dietaryEnergyConsumed, unit: .kilocalorie(), hourly: false).tagged(.nutrition, "fork.knife"),
+        ]
+    }
+
+    static var shareTypes: Set<HKSampleType> { Set(all.map(\.hkType)) }
+
+    /// Off by default on a fresh install: HRV only exists in Apple's SDNN form when Google
+    /// provides it (usually not), and height rarely changes.
+    static let offByDefault: Set<String> = [
+        HKQuantityTypeIdentifier.heartRateVariabilitySDNN.rawValue,
+        HKQuantityTypeIdentifier.height.rawValue,
+    ]
+
+    // MARK: - Builders
+
+    /// Reads a possibly nested field such as "amountConsumed.milliliters".
+    private static func value(_ dict: [String: Any], _ path: String) -> Double? {
+        var current: Any? = dict
+        for part in path.split(separator: ".") {
+            current = (current as? [String: Any])?[String(part)]
+        }
+        return GoogleHealthJSON.number(current)
+    }
+
+    /// Interval data (e.g. per-minute steps). By default summed into hourly samples so
+    /// Apple Health gets a useful graph without tens of thousands of tiny samples.
+    private static func intervalSum(name: String, dataType: String, key: String, field: String,
+                                    hk id: HKQuantityTypeIdentifier, unit: HKUnit,
+                                    scale: Double = 1, hourly: Bool = true) -> SyncItem {
+        let type = HKQuantityType(id)
+        return SyncItem(name: name, hkType: type) { client, since, now in
+            let points = try await client.listPoints(
+                dataType: dataType, pointKey: key, since: since,
+                timeOf: { GoogleHealthJSON.interval($0)?.start },
+                pageSize: hourly ? 10000 : 1000)
+
+            var entries: [(start: Date, end: Date, value: Double)] = []
+            for point in points {
+                guard let iv = GoogleHealthJSON.interval(point), let v = value(point, field), v > 0 else { continue }
+                entries.append((iv.start, iv.end, v * scale))
+            }
+
+            if hourly {
+                var buckets: [Date: Double] = [:]
+                let calendar = Calendar.current
+                for e in entries {
+                    let hour = calendar.dateInterval(of: .hour, for: e.start)!.start
+                    buckets[hour, default: 0] += e.value
+                }
+                return buckets.map { hour, total in
+                    let end = min(hour.addingTimeInterval(3600), max(now, hour.addingTimeInterval(1)))
+                    return HKQuantitySample(type: type, quantity: HKQuantity(unit: unit, doubleValue: total),
+                                            start: hour, end: end, metadata: meta)
+                }
+            }
+            return entries.map {
+                HKQuantitySample(type: type, quantity: HKQuantity(unit: unit, doubleValue: $0.value),
+                                 start: $0.start, end: max($0.end, $0.start), metadata: meta)
+            }
+        }
+    }
+
+    /// Point-in-time samples (weight, SpO2, VO2 max, ...).
+    private static func samples(name: String, dataType: String, key: String, field: String,
+                                hk id: HKQuantityTypeIdentifier, unit: HKUnit, scale: Double = 1) -> SyncItem {
+        let type = HKQuantityType(id)
+        return SyncItem(name: name, hkType: type) { client, since, _ in
+            let points = try await client.listPoints(
+                dataType: dataType, pointKey: key, since: since,
+                timeOf: GoogleHealthJSON.sampleTime)
+            return points.compactMap { point in
+                guard let time = GoogleHealthJSON.sampleTime(point), let v = value(point, field), v > 0 else { return nil }
+                return HKQuantitySample(type: type, quantity: HKQuantity(unit: unit, doubleValue: v * scale),
+                                        start: time, end: time, metadata: meta)
+            }
+        }
+    }
+
+    /// One value per day (resting heart rate, respiratory rate).
+    private static func daily(name: String, dataType: String, key: String, field: String,
+                              hk id: HKQuantityTypeIdentifier, unit: HKUnit) -> SyncItem {
+        let type = HKQuantityType(id)
+        return SyncItem(name: name, hkType: type) { client, since, _ in
+            let points = try await client.listPoints(
+                dataType: dataType, pointKey: key, since: since,
+                timeOf: GoogleHealthJSON.dailyDate, pageSize: 100)
+            return points.compactMap { point in
+                guard let day = GoogleHealthJSON.dailyDate(point), let v = value(point, field), v > 0 else { return nil }
+                return HKQuantitySample(type: type, quantity: HKQuantity(unit: unit, doubleValue: v),
+                                        start: day, end: day, metadata: meta)
+            }
+        }
+    }
+
+    /// Types only available as rollups (floors): one sample per day.
+    private static func dailyRollUp(name: String, dataType: String, valueKey: String,
+                                    hk id: HKQuantityTypeIdentifier, unit: HKUnit) -> SyncItem {
+        let type = HKQuantityType(id)
+        return SyncItem(name: name, hkType: type) { client, since, now in
+            let end = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: now))!
+            let days = try await client.dailyRollUp(dataType: dataType, valueKey: valueKey, from: since, to: end)
+            return days.compactMap { day, v in
+                guard v > 0, let dayEnd = Calendar.current.date(byAdding: .day, value: 1, to: day) else { return nil }
+                return HKQuantitySample(type: type, quantity: HKQuantity(unit: unit, doubleValue: v),
+                                        start: day, end: min(dayEnd, max(now, day)), metadata: meta)
+            }
+        }
+    }
+
+    /// Steps that match Google Health's own daily totals exactly.
+    ///
+    /// Google's daily total (dailyRollUp, the number the Google Health app shows) is the
+    /// source of truth. Hourly totals (rollUp, 1-hour windows) only spread each day's total
+    /// across the hours so Apple Health gets a useful graph; they are scaled so every day
+    /// adds up to Google's number to the step. If hourly data isn't available, the day is
+    /// written as one sample.
+    private static var steps: SyncItem {
+        let type = HKQuantityType(.stepCount)
+        return SyncItem(name: "צעדים", hkType: type) { client, since, now in
+            let calendar = Calendar.current
+            let endOfToday = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now))!
+
+            let daily = try await client.dailyRollUp(dataType: "steps", valueKey: "steps", from: since, to: endOfToday)
+
+            var hourly: [(start: Date, value: Double)] = []
+            do {
+                hourly = try await client.rollUp(dataType: "steps", valueKey: "steps", from: since, to: now,
+                                                 windowSeconds: 3600, pick: GoogleHealthJSON.sumNumber)
+            } catch let error as GoogleHealthError where error.isPermissionDenied {
+                throw error
+            } catch {
+                hourly = [] // fall back to one sample per day
+            }
+
+            var samples: [HKSample] = []
+            for (day, total) in daily where total > 0 {
+                guard let dayEnd = calendar.date(byAdding: .day, value: 1, to: day) else { continue }
+                let hours = hourly.filter { $0.start >= day && $0.start < dayEnd && $0.value > 0 }
+                let counts = distribute(Int(total.rounded()), over: hours.map { $0.value })
+                if counts.isEmpty {
+                    samples.append(HKQuantitySample(type: type, quantity: HKQuantity(unit: .count(), doubleValue: total),
+                                                    start: day, end: min(dayEnd, max(now, day.addingTimeInterval(1))),
+                                                    metadata: meta))
+                    continue
+                }
+                for (hour, count) in zip(hours, counts) where count > 0 {
+                    let end = min(hour.start.addingTimeInterval(3600), max(now, hour.start.addingTimeInterval(1)))
+                    samples.append(HKQuantitySample(type: type, quantity: HKQuantity(unit: .count(), doubleValue: Double(count)),
+                                                    start: hour.start, end: end, metadata: meta))
+                }
+            }
+            return samples
+        }
+    }
+
+    /// Splits `total` into integers proportional to `weights` that add up to exactly
+    /// `total` (largest-remainder rounding). Empty when there are no positive weights.
+    static func distribute(_ total: Int, over weights: [Double]) -> [Int] {
+        let sum = weights.reduce(0, +)
+        guard sum > 0, total > 0 else { return [] }
+        let exact = weights.map { Double(total) * $0 / sum }
+        var result = exact.map { Int($0.rounded(.down)) }
+        var remaining = total - result.reduce(0, +)
+        let order = exact.indices.sorted { (exact[$0] - exact[$0].rounded(.down)) > (exact[$1] - exact[$1].rounded(.down)) }
+        for i in order where remaining > 0 {
+            result[i] += 1
+            remaining -= 1
+        }
+        return result
+    }
+
+    /// Heart rate as 5-minute averages. Raw heart rate can be a sample every few seconds
+    /// (hundreds of thousands of points for two weeks), so Google aggregates it server-side
+    /// with rollUp; if that call isn't available, raw points are streamed and averaged
+    /// page by page instead.
+    private static var heartRate: SyncItem {
+        let type = HKQuantityType(.heartRate)
+        let bpm = HKUnit.count().unitDivided(by: .minute())
+        let window: TimeInterval = 300
+        return SyncItem(name: "דופק", hkType: type) { client, since, now in
+            var averages: [(start: Date, value: Double)] = []
+            do {
+                averages = try await client.rollUp(dataType: "heart-rate", valueKey: "heartRate",
+                                                   from: since, to: now, windowSeconds: Int(window))
+            } catch let error as GoogleHealthError where error.isPermissionDenied {
+                throw error
+            } catch {
+                averages = []
+            }
+            if averages.isEmpty {
+                var buckets: [Date: (sum: Double, count: Double)] = [:]
+                try await client.forEachPoint(dataType: "heart-rate", pointKey: "heartRate", since: since,
+                                              timeOf: GoogleHealthJSON.sampleTime, maxPages: 100) { point in
+                    guard let time = GoogleHealthJSON.sampleTime(point),
+                          let v = GoogleHealthJSON.number(point["beatsPerMinute"]), v > 0 else { return }
+                    let bucket = Date(timeIntervalSince1970: (time.timeIntervalSince1970 / window).rounded(.down) * window)
+                    let current = buckets[bucket] ?? (0, 0)
+                    buckets[bucket] = (current.sum + v, current.count + 1)
+                }
+                averages = buckets.map { ($0.key, $0.value.sum / $0.value.count) }
+            }
+            return averages.compactMap { start, value in
+                guard value > 0 else { return nil }
+                return HKQuantitySample(type: type, quantity: HKQuantity(unit: bpm, doubleValue: value.rounded()),
+                                        start: start, end: start, metadata: meta)
+            }
+        }
+    }
+
+    /// Sleep sessions with stages → Apple Health sleep analysis.
+    private static var sleep: SyncItem {
+        let type = HKCategoryType(.sleepAnalysis)
+        return SyncItem(name: "שינה", hkType: type) { client, since, _ in
+            // Sleep doesn't support dataSourceFamily; reconcile resolves overlapping sessions.
+            let sessions = try await client.listPoints(
+                dataType: "sleep", pointKey: "sleep", since: since,
+                timeOf: { GoogleHealthJSON.interval($0)?.start },
+                method: .reconcile, pageSize: 25, includeDataSourceFamily: false)
+
+            var result: [HKSample] = []
+            for session in sessions {
+                guard let iv = GoogleHealthJSON.interval(session) else { continue }
+                result.append(HKCategorySample(type: type, value: HKCategoryValueSleepAnalysis.inBed.rawValue,
+                                               start: iv.start, end: iv.end, metadata: meta))
+                let stages = (session["stages"] as? [[String: Any]]) ?? []
+                if stages.isEmpty {
+                    result.append(HKCategorySample(type: type, value: HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue,
+                                                   start: iv.start, end: iv.end, metadata: meta))
+                }
+                for stage in stages {
+                    guard let start = GoogleHealthJSON.timestamp(stage["startTime"]),
+                          let end = GoogleHealthJSON.timestamp(stage["endTime"]), end > start else { continue }
+                    let value: HKCategoryValueSleepAnalysis
+                    switch stage["type"] as? String {
+                    case "AWAKE": value = .awake
+                    case "LIGHT": value = .asleepCore
+                    case "DEEP": value = .asleepDeep
+                    case "REM": value = .asleepREM
+                    default: value = .asleepUnspecified // ASLEEP, RESTLESS
+                    }
+                    result.append(HKCategorySample(type: type, value: value.rawValue, start: start, end: end, metadata: meta))
+                }
+            }
+            return result
+        }
+    }
+
+    /// Exercise sessions → Apple Health workouts.
+    private static var workouts: SyncItem {
+        SyncItem(name: "אימונים", hkType: HKObjectType.workoutType()) { client, since, _ in
+            let sessions = try await client.listPoints(
+                dataType: "exercise", pointKey: "exercise", since: since,
+                timeOf: { GoogleHealthJSON.interval($0)?.start },
+                pageSize: 25)
+            return sessions.compactMap { session -> HKSample? in
+                guard let iv = GoogleHealthJSON.interval(session), iv.end > iv.start else { return nil }
+                let summary = session["metricsSummary"] as? [String: Any] ?? [:]
+                let kcal = GoogleHealthJSON.number(summary["caloriesKcal"])
+                let mm = GoogleHealthJSON.number(summary["distanceMillimeters"])
+                let duration = GoogleHealthJSON.duration(session["activeDuration"]) ?? iv.end.timeIntervalSince(iv.start)
+                var metadata = meta
+                if let title = session["displayName"] as? String, !title.isEmpty {
+                    metadata[HKMetadataKeyWorkoutBrandName] = title
+                }
+                return HKWorkout(
+                    activityType: activityType(session["exerciseType"] as? String),
+                    start: iv.start, end: iv.end, duration: duration,
+                    totalEnergyBurned: kcal.map { HKQuantity(unit: .kilocalorie(), doubleValue: $0) },
+                    totalDistance: mm.map { HKQuantity(unit: .meter(), doubleValue: $0 / 1000) },
+                    metadata: metadata)
+            }
+        }
+    }
+
+    private static func activityType(_ raw: String?) -> HKWorkoutActivityType {
+        let t = (raw ?? "").uppercased()
+        if t.contains("RUN") || t.contains("TREADMILL") { return .running }
+        if t.contains("WALK") { return .walking }
+        if t.contains("HIK") { return .hiking }
+        if t.contains("BIK") || t.contains("CYCL") || t.contains("SPINNING") { return .cycling }
+        if t.contains("SWIM") { return .swimming }
+        if t.contains("YOGA") { return .yoga }
+        if t.contains("PILATES") { return .pilates }
+        if t.contains("ELLIPTICAL") { return .elliptical }
+        if t.contains("ROW") { return .rowing }
+        if t.contains("WEIGHT") || t.contains("STRENGTH") { return .traditionalStrengthTraining }
+        if t.contains("HIIT") || t.contains("INTERVAL") { return .highIntensityIntervalTraining }
+        if t.contains("DANC") { return .socialDance }
+        if t.contains("TENNIS") { return .tennis }
+        if t.contains("SOCCER") || t.contains("FOOTBALL") { return .soccer }
+        if t.contains("BASKETBALL") { return .basketball }
+        if t.contains("STAIR") { return .stairClimbing }
+        return .other
+    }
+}

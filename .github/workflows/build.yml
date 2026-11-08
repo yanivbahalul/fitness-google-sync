@@ -1,0 +1,39 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      # Compile with placeholder config only. Real OAuth values stay on your Mac
+      # (Sources/Config/Secrets.plist, gitignored) and are never put into CI.
+      - name: Write placeholder Secrets.plist
+        run: cp Sources/Config/Secrets.example.plist Sources/Config/Secrets.plist
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build (unsigned, device)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project StepsBridge.xcodeproj \
+            -scheme StepsBridge \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build > xcodebuild.log 2>&1 || true
+          grep -E "error:|warning:" xcodebuild.log || true
+          tail -5 xcodebuild.log
+          grep -q "BUILD SUCCEEDED" xcodebuild.log

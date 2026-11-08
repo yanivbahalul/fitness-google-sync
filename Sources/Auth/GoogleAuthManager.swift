@@ -9,7 +9,7 @@ import Foundation
 /// and developers.google.com/health/endpoints (fetched 2026-11-06):
 ///   - authorize: https://accounts.google.com/o/oauth2/v2/auth
 ///   - token:     https://oauth2.googleapis.com/token
-///   - scope:     https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly
+///   - scopes:    googlehealth.{activity_and_fitness,health_metrics_and_measurements,sleep,nutrition}.readonly
 @MainActor
 final class GoogleAuthManager: NSObject, ObservableObject {
     @Published private(set) var isSignedIn: Bool = false
@@ -18,7 +18,12 @@ final class GoogleAuthManager: NSObject, ObservableObject {
     private var accessToken: String?
     private var accessTokenExpiresAt: Date?
 
-    private let scope = "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly"
+    static let scopes = [
+        "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
+        "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
+        "https://www.googleapis.com/auth/googlehealth.sleep.readonly",
+        "https://www.googleapis.com/auth/googlehealth.nutrition.readonly",
+    ]
     private let authorizeURL = "https://accounts.google.com/o/oauth2/v2/auth"
     private let tokenURL = URL(string: "https://oauth2.googleapis.com/token")!
 
@@ -45,7 +50,8 @@ final class GoogleAuthManager: NSObject, ObservableObject {
             URLQueryItem(name: "response_type", value: "code"),
             URLQueryItem(name: "access_type", value: "offline"),
             URLQueryItem(name: "prompt", value: "consent"),
-            URLQueryItem(name: "scope", value: scope),
+            URLQueryItem(name: "scope", value: Self.scopes.joined(separator: " ")),
+            URLQueryItem(name: "include_granted_scopes", value: "true"),
             URLQueryItem(name: "code_challenge", value: challenge),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
         ]
@@ -97,12 +103,10 @@ final class GoogleAuthManager: NSObject, ObservableObject {
         var request = URLRequest(url: tokenURL)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = formBody([
-            "client_id": AppConfig.googleClientID,
-            "client_secret": AppConfig.googleClientSecret,
+        request.httpBody = formBody(withClientCredentials([
             "refresh_token": refreshToken,
             "grant_type": "refresh_token",
-        ])
+        ]))
 
         let (data, response) = try await URLSession.shared.data(for: request)
         try Self.assertSuccess(response, data: data)
@@ -120,14 +124,12 @@ final class GoogleAuthManager: NSObject, ObservableObject {
         var request = URLRequest(url: tokenURL)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = formBody([
-            "client_id": AppConfig.googleClientID,
-            "client_secret": AppConfig.googleClientSecret,
+        request.httpBody = formBody(withClientCredentials([
             "code": code,
             "code_verifier": verifier,
             "grant_type": "authorization_code",
             "redirect_uri": AppConfig.googleRedirectURI,
-        ])
+        ]))
 
         let (data, response) = try await URLSession.shared.data(for: request)
         try Self.assertSuccess(response, data: data)
@@ -159,6 +161,16 @@ final class GoogleAuthManager: NSObject, ObservableObject {
             self.webAuthSession = session
             session.start()
         }
+    }
+
+    /// Adds client_id, plus client_secret only when one is configured (Web-type clients).
+    private func withClientCredentials(_ params: [String: String]) -> [String: String] {
+        var params = params
+        params["client_id"] = AppConfig.googleClientID
+        if let secret = AppConfig.googleClientSecret {
+            params["client_secret"] = secret
+        }
+        return params
     }
 
     private func formBody(_ params: [String: String]) -> Data {
