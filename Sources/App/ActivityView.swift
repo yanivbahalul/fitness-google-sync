@@ -255,7 +255,7 @@ private struct StepsTrendCard: View {
                 .chartYAxis {
                     AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
                         AxisGridLine().foregroundStyle(Color.secondary.opacity(0.15))
-                        AxisValueLabel {
+                        AxisValueLabel(anchor: .trailing) {
                             if let v = value.as(Double.self) { Text(compact(v)).font(.caption) }
                         }
                     }
@@ -311,7 +311,7 @@ private struct SleepCard: View {
                 .chartYAxis {
                     AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
                         AxisGridLine().foregroundStyle(Color.secondary.opacity(0.15))
-                        AxisValueLabel {
+                        AxisValueLabel(anchor: .trailing) {
                             if let v = value.as(Double.self) { Text("\(Int(safe: v))").font(.caption) }
                         }
                     }
@@ -358,7 +358,7 @@ private struct HeartCard: View {
                 .chartYAxis {
                     AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
                         AxisGridLine().foregroundStyle(Color.secondary.opacity(0.15))
-                        AxisValueLabel {
+                        AxisValueLabel(anchor: .trailing) {
                             if let v = value.as(Double.self) { Text("\(Int(safe: v))").font(.caption) }
                         }
                     }

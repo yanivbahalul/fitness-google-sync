@@ -317,7 +317,7 @@ private struct WeightCard: View {
                 .chartYAxis {
                     AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
                         AxisGridLine().foregroundStyle(Color.secondary.opacity(0.15))
-                        AxisValueLabel {
+                        AxisValueLabel(anchor: .trailing) {
                             if let v = value.as(Double.self) { Text("\(Int(safe: v))").font(.caption) }
                         }
                     }
@@ -415,7 +415,7 @@ private struct BalanceCard: View {
                 .chartYAxis {
                     AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
                         AxisGridLine().foregroundStyle(Color.secondary.opacity(0.15))
-                        AxisValueLabel {
+                        AxisValueLabel(anchor: .trailing) {
                             if let v = value.as(Double.self) { Text("\(Int(safe: v))").font(.caption) }
                         }
                     }
@@ -473,7 +473,7 @@ private struct ExpectedVsActualCard: View {
                 .chartYAxis {
                     AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
                         AxisGridLine().foregroundStyle(Color.secondary.opacity(0.15))
-                        AxisValueLabel {
+                        AxisValueLabel(anchor: .trailing) {
                             if let v = value.as(Double.self) { Text(String(format: "%.0f", v)).font(.caption) }
                         }
                     }
