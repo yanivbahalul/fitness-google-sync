@@ -97,7 +97,7 @@ final class ActivityModel: ObservableObject {
         }
     }
 
-    /// Hours asleep per night, counted on the day you woke up.
+    /// Hours asleep per night, counted on the day you woke up (naps on their own day).
     private func sleep(from start: Date) async -> [DayValue] {
         let calendar = Calendar.current
         let from = calendar.date(byAdding: .hour, value: -12, to: start)!
@@ -115,9 +115,12 @@ final class ActivityModel: ObservableObject {
             }
             store.execute(query)
         }
+        // A night belongs to the morning you wake up: shift by 6 hours so the "day" runs
+        // 18:00-18:00. Stages on both sides of midnight land on the same day, and a
+        // daytime nap counts for that same day.
         var byDay: [Date: Double] = [:]
         for s in samples where asleep.contains(s.value) {
-            let day = calendar.startOfDay(for: s.endDate)
+            let day = calendar.startOfDay(for: s.startDate.addingTimeInterval(6 * 3600))
             guard day >= start else { continue }
             byDay[day, default: 0] += s.endDate.timeIntervalSince(s.startDate) / 3600
         }

@@ -258,6 +258,15 @@ private struct WeightCard: View {
     @Binding var goalWeight: Double
     @State private var selected: ProgressModel.WeightPoint?
 
+    /// Draw the goal line only when it's near the weights; a far-away goal would squash
+    /// the chart and hide the real change. The goal is always shown in text below.
+    private var goalVisible: Bool {
+        guard goalWeight > 0, let lo = progress.weights.map(\.kg).min(),
+              let hi = progress.weights.map(\.kg).max() else { return false }
+        let margin = max(2, (hi - lo) * 0.5)
+        return goalWeight >= lo - margin && goalWeight <= hi + margin
+    }
+
     private var headline: (String, String?) {
         guard let change = progress.change, let first = progress.weights.first else {
             return ("עדיין אין שקילות בתקופה הזו", nil)
@@ -291,7 +300,7 @@ private struct WeightCard: View {
                             .interpolationMethod(.monotone)
                             .foregroundStyle(ChartColors.blue)
                     }
-                    if goalWeight > 0 {
+                    if goalVisible {
                         RuleMark(y: .value("יעד", goalWeight))
                             .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 4]))
                             .foregroundStyle(ChartColors.reference)
@@ -333,7 +342,7 @@ private struct WeightCard: View {
                 HStack(spacing: 14) {
                     LegendItem(color: ChartColors.blue, text: "מגמה")
                     LegendItem(color: ChartColors.blue.opacity(0.35), text: "שקילה")
-                    if goalWeight > 0 { LegendItem(color: ChartColors.reference, text: "יעד", dashed: true) }
+                    if goalVisible { LegendItem(color: ChartColors.reference, text: "יעד", dashed: true) }
                 }
             }
 
@@ -434,10 +443,17 @@ private struct ExpectedVsActualCard: View {
     var body: some View {
         let expected = progress.comparison.filter { $0.series == "צפוי לפי המאזן" }
         let actual = progress.comparison.filter { $0.series == "בפועל" }
-        if let exp = expected.last, let act = actual.last {
+        if expected.count < 2 {
             Card {
                 CardHeader(title: "צפוי מול בפועל", symbol: "scope")
-                Headline(text: "לפי מה שאכלת היית אמור \(exp.kg <= 0 ? "לרדת" : "לעלות") \(kg(exp.kg)). בפועל \(act.kg <= 0 ? "ירדת" : "עלית") \(kg(act.kg)).")
+                Headline(text: "יוצג אחרי \(ProgressModel.minDaysForComparison) ימים מלאים של רישום",
+                         detail: "עד עכשיו: \(progress.balances.count) ימים. בטווח קצר יותר, תנודות של מים במשקל גדולות מהשינוי האמיתי.")
+            }
+        } else if let exp = expected.last, let act = actual.last {
+            Card {
+                CardHeader(title: "צפוי מול בפועל", symbol: "scope")
+                Headline(text: "לפי מה שאכלת היית אמור \(exp.kg <= 0 ? "לרדת" : "לעלות") \(kg(exp.kg)). בפועל \(act.kg <= 0 ? "ירדת" : "עלית") \(kg(act.kg)).",
+                         detail: "מאז \(shortDate(AppSettings.foodTrackingStart)), לפי השקילות.")
                 Chart(progress.comparison) { p in
                     LineMark(x: .value("תאריך", p.day), y: .value("שינוי", p.kg))
                         .foregroundStyle(by: .value("סדרה", p.series))

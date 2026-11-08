@@ -41,6 +41,8 @@ final class ProgressModel: ObservableObject {
 
     /// Roughly 7,700 kcal per kg of body fat.
     static let kcalPerKg = 7700.0
+    /// Fewer logged days than this and daily water swings outweigh the real change.
+    static let minDaysForComparison = 7
 
     @Published var range: Range = .half
     @Published private(set) var weights: [WeightPoint] = []
@@ -51,6 +53,21 @@ final class ProgressModel: ObservableObject {
     @Published private(set) var loading = false
 
     private let store = HKHealthStore()
+
+    /// Weight on `date`, linearly interpolated between the nearest weigh-ins.
+    func weightAt(_ date: Date) -> Double? {
+        let before = weights.last { $0.date <= date }
+        let after = weights.first { $0.date > date }
+        switch (before, after) {
+        case let (b?, a?):
+            let span = a.date.timeIntervalSince(b.date)
+            guard span > 0 else { return b.kg }
+            return b.kg + (a.kg - b.kg) * date.timeIntervalSince(b.date) / span
+        case let (b?, nil): return b.kg
+        case let (nil, a?): return a.kg
+        default: return nil
+        }
+    }
 
     var currentWeight: Double? { trend.last?.kg ?? weights.last?.kg }
     var startWeight: Double? { trend.first?.kg ?? weights.first?.kg }
@@ -130,17 +147,23 @@ final class ProgressModel: ObservableObject {
         }
         balances = days
 
-        // Expected (from cumulative deficit) vs actual weight change, both in kg.
+        // Expected (from the cumulative calorie balance) vs actual weight change, both in kg,
+        // both measured from the same starting point: the weight on the food tracking start
+        // date (interpolated between weigh-ins). Only meaningful after a week of logging.
         var points: [ComparePoint] = []
-        // Both start at the food tracking start date (weight trend at that point = 0).
-        if !days.isEmpty, let base = trend.last(where: { $0.date <= foodStart.addingTimeInterval(86400) }) ?? trend.first {
+        if days.count >= Self.minDaysForComparison, let w0 = weightAt(foodStart) {
+            let start0 = calendar.startOfDay(for: foodStart)
+            points.append(ComparePoint(day: start0, series: "צפוי לפי המאזן", kg: 0))
+            points.append(ComparePoint(day: start0, series: "בפועל", kg: 0))
             var cumulative = 0.0
-            for b in days where b.day >= calendar.startOfDay(for: base.date) {
+            for b in days {
                 cumulative += b.deficit
-                points.append(ComparePoint(day: b.day, series: "צפוי לפי המאזן", kg: -cumulative / Self.kcalPerKg))
+                // The effect of a day's balance shows at the end of that day.
+                let end = calendar.date(byAdding: .day, value: 1, to: b.day)!
+                points.append(ComparePoint(day: end, series: "צפוי לפי המאזן", kg: -cumulative / Self.kcalPerKg))
             }
-            for p in trend where p.date >= base.date {
-                points.append(ComparePoint(day: p.date, series: "בפועל", kg: p.kg - base.kg))
+            for p in weights where p.date > start0 {
+                points.append(ComparePoint(day: p.date, series: "בפועל", kg: p.kg - w0))
             }
         }
         comparison = points
