@@ -18,6 +18,9 @@ enum AppSettings {
     static let deficitGoalKey = "deficitGoal"
     static let foodTrackingStartKey = "foodTrackingStart"
     static let stepGoalKey = "stepGoal"
+    /// Activity page numbers: Apple Health's merged total (all sources, as the Health app
+    /// shows) instead of only what HealthBridge wrote.
+    static let activityAllSourcesKey = "activityAllSources"
 
     static func registerDefaults() {
         UserDefaults.standard.register(defaults: [
@@ -27,6 +30,7 @@ enum AppSettings {
             expiryReminderKey: true,
             deficitGoalKey: 500,
             stepGoalKey: 10000,
+            activityAllSourcesKey: true,
         ])
     }
 

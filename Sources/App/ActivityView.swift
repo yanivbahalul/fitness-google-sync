@@ -2,8 +2,8 @@ import Charts
 import HealthKit
 import SwiftUI
 
-/// Daily activity and health data from the band, read back from what HealthBridge wrote
-/// to Apple Health (so it matches Google, not the iPhone's own step counter).
+/// Daily activity and health data read back from Apple Health: either its merged numbers
+/// (as the Health app shows them) or only what HealthBridge wrote (the band's data).
 @MainActor
 final class ActivityModel: ObservableObject {
     struct DayValue: Identifiable {
@@ -82,11 +82,16 @@ final class ActivityModel: ObservableObject {
     /// Only what HealthBridge wrote (the band's data from Google).
     private var ownSource: NSPredicate { HKQuery.predicateForObjects(from: HKSource.default()) }
 
+    /// Show Apple Health's merged numbers (every source, de-duplicated by the Health app's
+    /// source priority), the same as the Health app. Sleep always stays HealthBridge-only,
+    /// because summing several sources' sleep stages would count the night twice.
+    private var allSources: Bool { UserDefaults.standard.bool(forKey: AppSettings.activityAllSourcesKey) }
+
     private func daily(_ id: HKQuantityTypeIdentifier, unit: HKUnit, from start: Date, cumulative: Bool) async -> [DayValue] {
         let end = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: Date()))!
         let predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
-            HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate), ownSource,
-        ])
+            HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate),
+        ] + (allSources ? [] : [ownSource]))
         return await withCheckedContinuation { continuation in
             let query = HKStatisticsCollectionQuery(
                 quantityType: HKQuantityType(id), quantitySamplePredicate: predicate,
@@ -139,7 +144,7 @@ final class ActivityModel: ObservableObject {
     private func latest(_ id: HKQuantityTypeIdentifier, unit: HKUnit) async -> Double? {
         await withCheckedContinuation { continuation in
             let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
-            let query = HKSampleQuery(sampleType: HKQuantityType(id), predicate: ownSource, limit: 1,
+            let query = HKSampleQuery(sampleType: HKQuantityType(id), predicate: allSources ? nil : ownSource, limit: 1,
                                       sortDescriptors: [sort]) { _, results, _ in
                 continuation.resume(returning: (results?.first as? HKQuantitySample)?.quantity.doubleValue(for: unit))
             }
@@ -154,6 +159,7 @@ struct ActivityPage: View {
     @EnvironmentObject private var sync: SyncCoordinator
     @AppStorage(AppSettings.stepGoalKey) private var stepGoal = 10000
     @State private var burnedToday: Int?
+    @AppStorage(AppSettings.activityAllSourcesKey) private var allSources = true
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -176,6 +182,7 @@ struct ActivityPage: View {
         .refreshable { await model.refresh() }
         .onChange(of: model.range) { _ in Task { await model.refresh() } }
         .onChange(of: sync.lastSyncDate) { _ in Task { await model.refresh() } }
+        .onChange(of: allSources) { _ in Task { await model.refresh() } }
         // A sync from a Shortcut or in the background happens while this screen isn't
         // visible (and Apple Health can't be read while the phone is locked), so reload
         // whenever the app comes back.

@@ -18,6 +18,7 @@ struct SettingsView: View {
     @State private var keySaved = AnthropicKeyStore.key != nil
 
     private let expiry = Notifier.signingExpiry
+    @AppStorage(AppSettings.activityAllSourcesKey) private var activityAllSources = true
 
     var body: some View {
         NavigationStack {
@@ -50,6 +51,9 @@ struct SettingsView: View {
                         } label: {
                             SettingLabel("מה לסנכרן", symbol: "checklist")
                         }
+                    }
+                    Toggle(isOn: $activityAllSources) {
+                        SettingLabel("פעילות כמו ב‑Apple Health", symbol: "heart.text.square")
                     }
                     NavigationLink {
                         StepsCheckView()
