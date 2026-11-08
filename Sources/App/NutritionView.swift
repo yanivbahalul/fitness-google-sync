@@ -7,6 +7,7 @@ struct NutritionPage: View {
     @EnvironmentObject private var sync: SyncCoordinator
     @ObservedObject private var food = FoodLog.shared
     @StateObject private var progress = ProgressModel()
+    @Environment(\.scenePhase) private var scenePhase
     /// The day being viewed/edited (never in the future).
     @State private var day = Calendar.current.startOfDay(for: Date())
 
@@ -25,6 +26,13 @@ struct NutritionPage: View {
         .task { await progress.refresh(sync: sync, food: food) }
         .refreshable { await progress.refresh(sync: sync, food: food) }
         .onChange(of: food.entries) { _ in
+            Task { await progress.refresh(sync: sync, food: food) }
+        }
+        .onChange(of: sync.lastSyncDate) { _ in
+            Task { await progress.refresh(sync: sync, food: food) }
+        }
+        .onChange(of: scenePhase) { phase in
+            guard phase == .active else { return }
             Task { await progress.refresh(sync: sync, food: food) }
         }
     }

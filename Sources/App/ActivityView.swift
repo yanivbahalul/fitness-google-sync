@@ -35,6 +35,9 @@ final class ActivityModel: ObservableObject {
     @Published private(set) var loading = false
 
     private let store = HKHealthStore()
+    /// Each refresh gets a number; only the newest one may publish its results, so an
+    /// older, slower refresh never overwrites fresh data written by a sync.
+    private var generation = 0
 
     func today(_ series: [DayValue]) -> Double {
         series.first { Calendar.current.isDateInToday($0.day) }?.value ?? 0
@@ -48,21 +51,32 @@ final class ActivityModel: ObservableObject {
     }
 
     func refresh() async {
+        generation += 1
+        let mine = generation
         loading = true
-        defer { loading = false }
+        defer { if mine == generation { loading = false } }
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: Date())
         let start = calendar.date(byAdding: .day, value: -(range.rawValue - 1), to: today)!
 
         await HealthAuthorization.request()
 
-        steps = await daily(.stepCount, unit: .count(), from: start, cumulative: true)
-        distanceKm = await daily(.distanceWalkingRunning, unit: .meterUnit(with: .kilo), from: start, cumulative: true)
-        activeKcal = await daily(.activeEnergyBurned, unit: .kilocalorie(), from: start, cumulative: true)
-        floors = await daily(.flightsClimbed, unit: .count(), from: start, cumulative: true)
-        restingHR = await daily(.restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()), from: start, cumulative: false)
-        sleepHours = await sleep(from: start)
-        vo2Max = await latest(.vo2Max, unit: HKUnit(from: "ml/kg*min"))
+        let steps = await daily(.stepCount, unit: .count(), from: start, cumulative: true)
+        let distance = await daily(.distanceWalkingRunning, unit: .meterUnit(with: .kilo), from: start, cumulative: true)
+        let active = await daily(.activeEnergyBurned, unit: .kilocalorie(), from: start, cumulative: true)
+        let floors = await daily(.flightsClimbed, unit: .count(), from: start, cumulative: true)
+        let resting = await daily(.restingHeartRate, unit: HKUnit.count().unitDivided(by: .minute()), from: start, cumulative: false)
+        let sleep = await sleep(from: start)
+        let vo2 = await latest(.vo2Max, unit: HKUnit(from: "ml/kg*min"))
+
+        guard mine == generation else { return }
+        self.steps = steps
+        distanceKm = distance
+        activeKcal = active
+        self.floors = floors
+        restingHR = resting
+        sleepHours = sleep
+        vo2Max = vo2
     }
 
     /// Only what HealthBridge wrote (the band's data from Google).
@@ -140,6 +154,7 @@ struct ActivityPage: View {
     @EnvironmentObject private var sync: SyncCoordinator
     @AppStorage(AppSettings.stepGoalKey) private var stepGoal = 10000
     @State private var burnedToday: Int?
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ScrollView {
@@ -161,6 +176,16 @@ struct ActivityPage: View {
         .refreshable { await model.refresh() }
         .onChange(of: model.range) { _ in Task { await model.refresh() } }
         .onChange(of: sync.lastSyncDate) { _ in Task { await model.refresh() } }
+        // A sync from a Shortcut or in the background happens while this screen isn't
+        // visible (and Apple Health can't be read while the phone is locked), so reload
+        // whenever the app comes back.
+        .onChange(of: scenePhase) { phase in
+            guard phase == .active else { return }
+            Task {
+                await model.refresh()
+                burnedToday = await sync.burned(on: Date())
+            }
+        }
     }
 }
 

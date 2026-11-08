@@ -188,7 +188,8 @@ struct EnergyCard: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .task(id: day) {
+        // Reload after every sync too, not only when the day changes.
+        .task(id: "\(day.timeIntervalSince1970)-\(sync.lastSyncDate?.timeIntervalSince1970 ?? 0)") {
             loadingBurned = true
             otherApps = Int(safe: (await food.otherAppsDailyKcal(from: day, days: 1)).values.reduce(0, +).rounded())
             burned = await sync.burned(on: day)
