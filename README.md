@@ -6,11 +6,16 @@
 
 **Your fitness band's data in Apple Health again, plus a food diary that tracks your weight loss.**
 
-<img alt="platform" src="https://img.shields.io/badge/iOS-16%2B-000000?logo=apple&logoColor=white">
-<img alt="swift" src="https://img.shields.io/badge/Swift-5-F05138?logo=swift&logoColor=white">
-<img alt="build" src="https://github.com/yanivbahalul/fitness-google-sync/actions/workflows/build.yml/badge.svg?branch=main">
-<img alt="api" src="https://img.shields.io/badge/Google%20Health%20API-v4-4285F4?logo=google&logoColor=white">
-<img alt="scope" src="https://img.shields.io/badge/use-personal-6E6E73">
+<a href="https://github.com/yanivbahalul/fitness-google-sync/actions/workflows/build.yml"><img alt="Build status" src="https://github.com/yanivbahalul/fitness-google-sync/actions/workflows/build.yml/badge.svg?branch=main"></a>
+<img alt="Platform: iOS 16 or later" src="https://img.shields.io/badge/iOS-16%2B-000000?logo=apple&logoColor=white">
+<img alt="Swift 5 with SwiftUI" src="https://img.shields.io/badge/Swift-5%20%C2%B7%20SwiftUI-F05138?logo=swift&logoColor=white">
+<img alt="Apple HealthKit" src="https://img.shields.io/badge/Apple-HealthKit-FF2D55?logo=apple&logoColor=white">
+<a href="https://developers.google.com/health"><img alt="Google Health API v4" src="https://img.shields.io/badge/Google%20Health%20API-v4-4285F4?logo=google&logoColor=white"></a>
+<a href="https://docs.anthropic.com"><img alt="Claude API for meal analysis" src="https://img.shields.io/badge/Claude%20API-meal%20analysis-D97757?logo=anthropic&logoColor=white"></a>
+<img alt="Interface in Hebrew, right to left" src="https://img.shields.io/badge/UI-Hebrew%20%C2%B7%20RTL-5856D6">
+<a href="#privacy"><img alt="Privacy: runs on the device, no server" src="https://img.shields.io/badge/privacy-on--device%2C%20no%20server-34C759"></a>
+<a href="https://github.com/yanivbahalul/fitness-google-sync/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/yanivbahalul/fitness-google-sync?color=6E6E73"></a>
+<img alt="Personal use" src="https://img.shields.io/badge/use-personal-6E6E73">
 
 [Features](#features) · [How it works](#how-it-works) · [Setup](#setup) · [Privacy](#privacy) · [Troubleshooting](#troubleshooting)
 
