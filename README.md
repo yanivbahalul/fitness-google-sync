@@ -1,25 +1,47 @@
+<div align="center">
+
+<img src="Sources/Assets.xcassets/AppIcon.appiconset/AppIcon.png" width="120" alt="HealthBridge icon">
+
 # HealthBridge
 
-**Google Health → Apple Health sync, plus a food diary and weight-loss tracker, on your own iPhone.**
+**Your fitness band's data in Apple Health again, plus a food diary that tracks your weight loss.**
 
-<p align="left">
-  <img alt="platform" src="https://img.shields.io/badge/platform-iOS%2016%2B-lightgrey?logo=apple&logoColor=white">
-  <img alt="language" src="https://img.shields.io/badge/Swift-5-orange?logo=swift&logoColor=white">
-  <img alt="build" src="https://github.com/yanivbahalul/fitness-google-sync/actions/workflows/build.yml/badge.svg?branch=claude%2Fhei-rbtxak">
-  <img alt="scope" src="https://img.shields.io/badge/scope-personal%2C%20single%20user-informational">
+<img alt="platform" src="https://img.shields.io/badge/iOS-16%2B-000000?logo=apple&logoColor=white">
+<img alt="swift" src="https://img.shields.io/badge/Swift-5-F05138?logo=swift&logoColor=white">
+<img alt="build" src="https://github.com/yanivbahalul/fitness-google-sync/actions/workflows/build.yml/badge.svg?branch=claude%2Fhei-rbtxak">
+<img alt="api" src="https://img.shields.io/badge/Google%20Health%20API-v4-4285F4?logo=google&logoColor=white">
+<img alt="scope" src="https://img.shields.io/badge/use-personal-6E6E73">
+
+[Features](#features) · [How it works](#how-it-works) · [Setup](#setup) · [Privacy](#privacy) · [Troubleshooting](#troubleshooting)
+
+</div>
+
+<!--
+SCREENSHOTS - add the files to docs/screenshots/ and uncomment:
+
+<p align="center">
+  <img src="docs/screenshots/sync.png"      width="230" alt="Sync screen">
+  <img src="docs/screenshots/nutrition.png" width="230" alt="Nutrition screen">
+  <img src="docs/screenshots/progress.png"  width="230" alt="Weight progress">
 </p>
+<p align="center">
+  <img src="docs/screenshots/meal-photo.png"  width="230" alt="Meal from a photo">
+  <img src="docs/screenshots/balance.png"     width="230" alt="Eaten vs burned">
+  <img src="docs/screenshots/steps-check.png" width="230" alt="Steps check">
+</p>
+-->
 
-Google shut off the old **Fitbit Web API** on Nov 2, 2026, which broke the third-party apps
-that copied band data into Apple Health. HealthBridge talks to Google's new
-**[Google Health API](https://developers.google.com/health/about)** instead and writes
-17 kinds of data straight into Apple Health. A second screen adds a food diary (photo, text,
-Hebrew search, barcode) and progress charts for weight loss.
+## Why
 
-> The app's display name is **HealthBridge**. The Xcode project, target and bundle ID keep
-> the original `StepsBridge` name on purpose: the Google OAuth client and the data already
-> written to Apple Health are tied to the bundle ID `com.yanivbahalul.stepsbridge`.
+Google shut off the old **Fitbit Web API** on November 2, 2026, which broke the apps that
+copied band data into Apple Health. HealthBridge uses Google's new
+**[Google Health API](https://developers.google.com/health/about)** instead, writes 17 kinds
+of data into Apple Health, and adds a nutrition screen for logging food and following
+weight loss over time. It runs entirely on the phone, with no server.
 
-<!-- Screenshots: add docs/assets/*.png and a gallery here. -->
+> The app is called **HealthBridge**. The Xcode project, target and bundle ID keep the
+> original `StepsBridge` name on purpose: the Google OAuth client and the data already in
+> Apple Health are tied to the bundle ID `com.yanivbahalul.stepsbridge`.
 
 ---
 
