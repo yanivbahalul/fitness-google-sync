@@ -276,7 +276,7 @@ struct DailyDateAxis: ViewModifier {
             .chartXScale(domain: lo...hi)
             .chartXAxis {
                 AxisMarks(values: .stride(by: .day, count: step)) { _ in
-                    AxisValueLabel(format: .dateTime.day().month(.abbreviated).locale(.he), centered: false)
+                    AxisValueLabel(format: .dateTime.day().month(.abbreviated).locale(.he))
                         .font(.caption)
                 }
             }

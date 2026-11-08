@@ -54,12 +54,7 @@ final class ActivityModel: ObservableObject {
         let today = calendar.startOfDay(for: Date())
         let start = calendar.date(byAdding: .day, value: -(range.rawValue - 1), to: today)!
 
-        let read: Set<HKObjectType> = [
-            HKQuantityType(.stepCount), HKQuantityType(.distanceWalkingRunning),
-            HKQuantityType(.activeEnergyBurned), HKQuantityType(.flightsClimbed),
-            HKQuantityType(.restingHeartRate), HKQuantityType(.vo2Max), HKCategoryType(.sleepAnalysis),
-        ]
-        try? await store.requestAuthorization(toShare: [], read: read)
+        await HealthAuthorization.request()
 
         steps = await daily(.stepCount, unit: .count(), from: start, cumulative: true)
         distanceKm = await daily(.distanceWalkingRunning, unit: .meterUnit(with: .kilo), from: start, cumulative: true)

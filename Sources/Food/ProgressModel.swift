@@ -117,7 +117,7 @@ final class ProgressModel: ObservableObject {
 
         // Weight (all sources in Apple Health).
         let massType = HKQuantityType(.bodyMass)
-        try? await store.requestAuthorization(toShare: [], read: [massType])
+        await HealthAuthorization.request()
         let raw = (try? await samples(of: massType, from: start)) ?? []
         // One point per day (the day's last reading).
         var byDay: [Date: HKQuantitySample] = [:]

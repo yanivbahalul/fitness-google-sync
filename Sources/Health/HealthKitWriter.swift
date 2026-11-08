@@ -121,3 +121,47 @@ enum HealthKitWriterError: LocalizedError {
         }
     }
 }
+
+/// One Apple Health permission request for everything the app reads and writes.
+///
+/// iOS shows one permission sheet at a time; when several screens asked at once on launch,
+/// all but one request were dropped ("view is not in the window hierarchy"). Every caller
+/// now awaits this single shared request instead.
+@MainActor
+enum HealthAuthorization {
+    private static let store = HKHealthStore()
+    private static var inFlight: Task<Void, Never>?
+    private static var done = false
+
+    static var shareTypes: Set<HKSampleType> {
+        var types = SyncCatalog.shareTypes
+        for id: HKQuantityTypeIdentifier in [.dietaryEnergyConsumed, .dietaryProtein, .dietaryCarbohydrates,
+                                             .dietaryFatTotal, .bodyMass] {
+            types.insert(HKQuantityType(id))
+        }
+        return types
+    }
+
+    static var readTypes: Set<HKObjectType> {
+        var types: Set<HKObjectType> = [HKCategoryType(.sleepAnalysis)]
+        for id: HKQuantityTypeIdentifier in [.stepCount, .distanceWalkingRunning, .activeEnergyBurned, .flightsClimbed,
+                                             .restingHeartRate, .vo2Max, .bodyMass, .dietaryEnergyConsumed] {
+            types.insert(HKQuantityType(id))
+        }
+        return types
+    }
+
+    /// Asks once per launch (iOS only shows types not yet decided). Safe to call from
+    /// anywhere, concurrently; only call it while the app is in the foreground.
+    static func request() async {
+        guard HKHealthStore.isHealthDataAvailable(), !done else { return }
+        if let inFlight { await inFlight.value; return }
+        let task = Task {
+            try? await store.requestAuthorization(toShare: shareTypes, read: readTypes)
+        }
+        inFlight = task
+        await task.value
+        done = true
+        inFlight = nil
+    }
+}

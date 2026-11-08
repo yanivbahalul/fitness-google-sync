@@ -190,14 +190,7 @@ final class SyncCoordinator: ObservableObject {
         // app runs in the background (Shortcuts, background refresh). Only ask in the
         // foreground; otherwise sync the types that are already allowed.
         if trigger == .manual || trigger == .appOpen {
-            do {
-                try await healthKitWriter.requestAuthorization(toShare: Set(selected.map(\.hkType)),
-                                                              read: [HKQuantityType(.stepCount)])
-            } catch {
-                outcome.error = "Apple Health: \(error.localizedDescription)"
-                finish(outcome, trigger: trigger, rangeTitle: effectiveRange.title)
-                return outcome
-            }
+            await HealthAuthorization.request()
         } else {
             let allowed = selected.filter { healthKitWriter.store.authorizationStatus(for: $0.hkType) == .sharingAuthorized }
             for item in selected where !allowed.contains(where: { $0.id == item.id }) {
@@ -392,7 +385,7 @@ final class SyncCoordinator: ObservableObject {
         let start = calendar.date(byAdding: .day, value: -(days - 1), to: today)!
         let end = calendar.date(byAdding: .day, value: 1, to: today)!
 
-        try await healthKitWriter.requestAuthorization(toShare: [], read: [HKQuantityType(.stepCount)])
+        await HealthAuthorization.request()
         let google = try await healthClient.dailyRollUp(dataType: "steps", valueKey: "steps", from: start, to: end)
         let googleByDay = Dictionary(google.map { ($0.day, $0.value) }, uniquingKeysWith: +)
         let mine = try await healthKitWriter.dailySteps(from: start, days: days, onlyThisApp: true)
