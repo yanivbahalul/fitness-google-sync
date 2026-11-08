@@ -196,7 +196,7 @@ struct PhotoAnalyzeView: View {
                 }
             }
         }
-        .environment(\.layoutDirection, .rightToLeft)
+        .appChrome()
     }
 
     private func analyze() async {
@@ -287,7 +287,7 @@ struct TextAnalyzeView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("ביטול") { dismiss() } } }
         }
-        .environment(\.layoutDirection, .rightToLeft)
+        .appChrome()
     }
 
     private func analyze() async {
@@ -356,7 +356,7 @@ struct FoodSearchView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("ביטול") { dismiss() } } }
         }
-        .environment(\.layoutDirection, .rightToLeft)
+        .appChrome()
     }
 }
 
@@ -407,7 +407,7 @@ struct BarcodeAddView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("ביטול") { dismiss() } } }
         }
-        .environment(\.layoutDirection, .rightToLeft)
+        .appChrome()
     }
 
     private func lookup(_ barcode: String) async {

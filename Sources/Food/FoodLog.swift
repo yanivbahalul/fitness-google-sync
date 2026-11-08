@@ -151,7 +151,19 @@ final class FoodLog: ObservableObject {
         return result
     }
 
-    func delete(_ entry: FoodEntry) async {
+    /// Entries imported from Cali before `date`.
+    func importedEntries(before date: Date) -> [FoodEntry] {
+        entries.filter { $0.source == .cali && $0.date < date }
+    }
+
+    /// Deletes Cali-imported entries before `date` from the diary and Apple Health.
+    func deleteImported(before date: Date) async {
+        for entry in importedEntries(before: date) {
+            await delete(entry)
+        }
+    }
+
+        func delete(_ entry: FoodEntry) async {
         entries.removeAll { $0.id == entry.id }
         save()
         do {
@@ -170,8 +182,7 @@ final class FoodLog: ObservableObject {
         entries.append(contentsOf: new)
         save()
         do {
-            let shareTypes = Set(types.map { HKQuantityType($0.0) as HKSampleType })
-            try await store.requestAuthorization(toShare: shareTypes, read: [HKQuantityType(.dietaryEnergyConsumed)])
+            await HealthAuthorization.request()
             var samples: [HKSample] = []
             for entry in new {
                 let meta: [String: Any] = [Self.entryKey: entry.id.uuidString, HKMetadataKeyFoodType: entry.name]
@@ -192,7 +203,7 @@ final class FoodLog: ObservableObject {
     /// what this app wrote, so nothing is counted twice.
     func otherAppsDailyKcal(from start: Date, days: Int) async -> [Date: Double] {
         let type = HKQuantityType(.dietaryEnergyConsumed)
-        try? await store.requestAuthorization(toShare: [], read: [type])
+        await HealthAuthorization.request()
         let calendar = Calendar.current
         let start = calendar.startOfDay(for: start)
         let end = calendar.date(byAdding: .day, value: days, to: start)!

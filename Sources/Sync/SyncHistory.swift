@@ -32,6 +32,10 @@ struct SyncLogEntry: Codable, Identifiable {
     let records: Int
     let syncedTypes: Int
     let failedTypes: [String]
+    /// Why the sync stopped, when it did (older entries don't have it).
+    var error: String? = nil
+    /// Slow-changing types not fetched because they were fetched recently.
+    var skippedTypes: Int? = nil
 }
 
 /// The last 50 syncs, persisted.

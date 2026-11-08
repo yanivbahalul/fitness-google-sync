@@ -2,40 +2,37 @@ import Charts
 import PhotosUI
 import SwiftUI
 
-/// Chart colors: the validated reference categorical pair (blue / orange), stepped
-/// separately for light and dark mode.
-enum ChartColors {
-    static let blue = Color(UIColor { $0.userInterfaceStyle == .dark
-        ? UIColor(red: 0x39 / 255, green: 0x87 / 255, blue: 0xE5 / 255, alpha: 1)
-        : UIColor(red: 0x2A / 255, green: 0x78 / 255, blue: 0xD6 / 255, alpha: 1) })
-    static let orange = Color(UIColor { $0.userInterfaceStyle == .dark
-        ? UIColor(red: 0xD9 / 255, green: 0x59 / 255, blue: 0x26 / 255, alpha: 1)
-        : UIColor(red: 0xEB / 255, green: 0x68 / 255, blue: 0x34 / 255, alpha: 1) })
-}
-
 /// The nutrition screen: today's balance, adding food, today's diary and progress over time.
 struct NutritionPage: View {
     @EnvironmentObject private var sync: SyncCoordinator
     @ObservedObject private var food = FoodLog.shared
     @StateObject private var progress = ProgressModel()
+    @Environment(\.scenePhase) private var scenePhase
     /// The day being viewed/edited (never in the future).
     @State private var day = Calendar.current.startOfDay(for: Date())
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
+            VStack(spacing: DS.cardSpacing) {
                 DayNavigator(day: $day)
                 EnergyCard(day: day)
                 AddFoodCard(day: day)
                 DiaryCard(day: day)
                 ProgressSection(progress: progress)
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, DS.pagePadding)
             .padding(.bottom, 24)
         }
         .task { await progress.refresh(sync: sync, food: food) }
         .refreshable { await progress.refresh(sync: sync, food: food) }
         .onChange(of: food.entries) { _ in
+            Task { await progress.refresh(sync: sync, food: food) }
+        }
+        .onChange(of: sync.lastSyncDate) { _ in
+            Task { await progress.refresh(sync: sync, food: food) }
+        }
+        .onChange(of: scenePhase) { phase in
+            guard phase == .active else { return }
             Task { await progress.refresh(sync: sync, food: food) }
         }
     }
@@ -115,15 +112,14 @@ private struct AddFoodCard: View {
 
     var body: some View {
         Card {
-            Label(Calendar.current.isDateInToday(day) ? "הוסף אוכל" : "הוסף אוכל ל‑\(day.formatted(.dateTime.day().month().locale(.he)))",
-                  systemImage: "plus.circle.fill")
-                .font(.headline)
+            CardHeader(title: Calendar.current.isDateInToday(day) ? "הוסף אוכל" : "הוסף אוכל ל‑\(day.formatted(.dateTime.day().month().locale(.he)))",
+                       symbol: "plus")
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                AddButton(title: "צילום", symbol: "camera.fill", color: Theme.blue) { mode = .photo }
-                AddButton(title: "תיאור", symbol: "text.bubble.fill", color: .purple) { mode = .text }
-                AddButton(title: "חיפוש", symbol: "magnifyingglass", color: .teal) { mode = .search }
-                AddButton(title: "ברקוד", symbol: "barcode.viewfinder", color: .indigo) { mode = .barcode }
-                AddButton(title: "מהיר", symbol: "bolt.fill", color: .orange) { quickText = ""; quickAdd = true }
+                AddButton(title: "צילום", symbol: "camera.fill") { mode = .photo }
+                AddButton(title: "תיאור", symbol: "text.bubble.fill") { mode = .text }
+                AddButton(title: "חיפוש", symbol: "magnifyingglass") { mode = .search }
+                AddButton(title: "ברקוד", symbol: "barcode.viewfinder") { mode = .barcode }
+                AddButton(title: "מהיר", symbol: "bolt.fill") { quickText = ""; quickAdd = true }
             }
         }
         .sheet(item: $mode) { mode in
@@ -151,17 +147,12 @@ private struct AddFoodCard: View {
 private struct AddButton: View {
     let title: String
     let symbol: String
-    let color: Color
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             VStack(spacing: 6) {
-                Image(systemName: symbol)
-                    .font(.title3)
-                    .foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
-                    .background(color.gradient, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                SoftIcon(symbol: symbol, size: 44)
                 Text(title)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.primary)
@@ -183,10 +174,7 @@ private struct DiaryCard: View {
         let entries = food.entries(on: day)
         let isToday = Calendar.current.isDateInToday(day)
         Card {
-            HStack {
-                Label(isToday ? "יומן היום" : "יומן", systemImage: "list.bullet.rectangle.fill")
-                    .font(.headline)
-                Spacer()
+            CardHeader(title: isToday ? "יומן היום" : "יומן", symbol: "list.bullet") {
                 Text("\(Int(safe: entries.map(\.kcal).reduce(0, +)).formatted()) קק\"ל")
                     .font(.subheadline.weight(.semibold))
                     .monospacedDigit()
@@ -250,7 +238,7 @@ private struct ProgressSection: View {
     @AppStorage("goalWeight") private var goalWeight = 0.0
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: DS.cardSpacing) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("ההתקדמות שלי")
                     .font(.title2.bold())
@@ -273,49 +261,19 @@ private struct ProgressSection: View {
     }
 }
 
-/// Big, plain-language headline at the top of each chart card.
-private struct Headline: View {
-    let text: String
-    var detail: String? = nil
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(text)
-                .font(.title3.weight(.semibold))
-                .fixedSize(horizontal: false, vertical: true)
-            if let detail {
-                Text(detail)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-/// Small colored dot + label, for a legend written in words.
-private struct LegendItem: View {
-    let color: Color
-    let text: String
-    var dashed = false
-
-    var body: some View {
-        HStack(spacing: 6) {
-            if dashed {
-                Capsule().stroke(color, style: StrokeStyle(lineWidth: 2, dash: [3, 3])).frame(width: 16, height: 2)
-            } else {
-                Circle().fill(color).frame(width: 10, height: 10)
-            }
-            Text(text).font(.caption).foregroundStyle(.secondary)
-        }
-    }
-}
-
 private struct WeightCard: View {
     @ObservedObject var progress: ProgressModel
     @Binding var goalWeight: Double
     @State private var selected: ProgressModel.WeightPoint?
+
+    /// Draw the goal line only when it's near the weights; a far-away goal would squash
+    /// the chart and hide the real change. The goal is always shown in text below.
+    private var goalVisible: Bool {
+        guard goalWeight > 0, let lo = progress.weights.map(\.kg).min(),
+              let hi = progress.weights.map(\.kg).max() else { return false }
+        let margin = max(2, (hi - lo) * 0.5)
+        return goalWeight >= lo - margin && goalWeight <= hi + margin
+    }
 
     private var headline: (String, String?) {
         guard let change = progress.change, let first = progress.weights.first else {
@@ -329,9 +287,7 @@ private struct WeightCard: View {
 
     var body: some View {
         Card {
-            Label("משקל", systemImage: "scalemass.fill")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
+            CardHeader(title: "משקל", symbol: "scalemass.fill")
             Headline(text: headline.0, detail: headline.1)
 
             if !progress.weights.isEmpty {
@@ -352,16 +308,16 @@ private struct WeightCard: View {
                             .interpolationMethod(.monotone)
                             .foregroundStyle(ChartColors.blue)
                     }
-                    if goalWeight > 0 {
+                    if goalVisible {
                         RuleMark(y: .value("יעד", goalWeight))
                             .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 4]))
-                            .foregroundStyle(Color.green)
+                            .foregroundStyle(ChartColors.reference)
                     }
                     if let selected {
                         RuleMark(x: .value("תאריך", selected.date))
                             .foregroundStyle(Color.secondary.opacity(0.4))
                             .annotation(position: .top) {
-                                Tooltip(title: shortDate(selected.date), value: kg(selected.kg))
+                                ValueBubble(title: shortDate(selected.date), value: kg(selected.kg))
                             }
                     }
                 }
@@ -369,16 +325,12 @@ private struct WeightCard: View {
                 .chartYAxis {
                     AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
                         AxisGridLine().foregroundStyle(Color.secondary.opacity(0.15))
-                        AxisValueLabel {
+                        AxisValueLabel(anchor: .trailing) {
                             if let v = value.as(Double.self) { Text("\(Int(safe: v))").font(.caption) }
                         }
                     }
                 }
-                .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                        AxisValueLabel(format: .dateTime.day().month(.abbreviated).locale(.he)).font(.caption)
-                    }
-                }
+                .dailyDateAxis(progress.weights.map(\.date))
                 .frame(height: 220)
                 // Time runs left to right like any chart, even in the right-to-left UI.
                 .environment(\.layoutDirection, .leftToRight)
@@ -394,7 +346,7 @@ private struct WeightCard: View {
                 HStack(spacing: 14) {
                     LegendItem(color: ChartColors.blue, text: "מגמה")
                     LegendItem(color: ChartColors.blue.opacity(0.35), text: "שקילה")
-                    if goalWeight > 0 { LegendItem(color: .green, text: "יעד", dashed: true) }
+                    if goalVisible { LegendItem(color: ChartColors.reference, text: "יעד", dashed: true) }
                 }
             }
 
@@ -422,110 +374,61 @@ private struct WeightCard: View {
     }
 }
 
-/// Drag/tap on a chart to pick the nearest date.
-private struct SelectionOverlay: View {
-    let proxy: ChartProxy
-    let onSelect: (Date) -> Void
-    let onEnd: () -> Void
-
-    var body: some View {
-        GeometryReader { geo in
-            Rectangle().fill(.clear).contentShape(Rectangle())
-                .gesture(DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        let origin = geo[proxy.plotAreaFrame].origin
-                        if let date: Date = proxy.value(atX: value.location.x - origin.x) { onSelect(date) }
-                    }
-                    .onEnded { _ in onEnd() })
-        }
-    }
-}
-
-private struct StatTile: View {
-    let title: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(value)
-                .font(.title3.bold())
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .accessibilityElement(children: .combine)
-    }
-}
-
-private struct Tooltip: View {
-    let title: String
-    let value: String
-
-    var body: some View {
-        VStack(spacing: 2) {
-            Text(value).font(.caption.weight(.semibold)).monospacedDigit()
-            Text(title).font(.caption2).foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-    }
-}
-
 private struct BalanceCard: View {
     @ObservedObject var progress: ProgressModel
     @State private var selected: ProgressModel.DayBalance?
 
     var body: some View {
         let days = progress.balances
-        let good = days.filter { $0.deficit > 0 }.count
+        let logged = days.filter(\.logged)
+        let unlogged = days.count - logged.count
+        let good = logged.filter { $0.deficit > 0 }.count
         Card {
-            Label("אכלתי מול שרפתי", systemImage: "flame.fill")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-            if days.isEmpty {
-                Headline(text: "עוד אין מספיק נתונים")
+            CardHeader(title: "אכלתי מול שרפתי", symbol: "flame.fill")
+            if days.count < ProgressModel.minDaysForComparison {
+                Headline(text: "יוצג אחרי \(ProgressModel.minDaysForComparison) ימים מתחילת המעקב",
+                         detail: "עד עכשיו: \(days.count) ימים מלאים, מתוכם \(logged.count) עם רישום אוכל.")
             } else {
-                Headline(text: "ב‑\(good) מתוך \(days.count) ימים אכלת פחות ממה ששרפת",
-                         detail: progress.averageDeficit.map { avg in
-                             avg >= 0 ? "בממוצע אכלת \(Int(safe: avg).formatted()) קלוריות פחות ממה ששרפת ביום."
-                                      : "בממוצע אכלת \(Int(safe: -avg).formatted()) קלוריות יותר ממה ששרפת ביום."
-                         })
+                Headline(text: "ב‑\(good) מתוך \(logged.count) ימים שנרשמו אכלת פחות ממה ששרפת",
+                         detail: [progress.averageDeficit.map { avg in
+                                     avg >= 0 ? "גרעון ממוצע של \(Int(safe: avg).formatted()) קלוריות ביום."
+                                              : "עודף ממוצע של \(Int(safe: -avg).formatted()) קלוריות ביום."
+                                  },
+                                  unlogged > 0 ? "\(unlogged) ימים בלי רישום נספרו כמאוזנים (0)." : nil]
+                             .compactMap { $0 }.joined(separator: " "))
                 Chart {
                     ForEach(days) { b in
-                        BarMark(x: .value("יום", b.day, unit: .day), y: .value("הפרש", b.deficit))
-                            .foregroundStyle(b.deficit >= 0 ? ChartColors.blue : ChartColors.orange)
-                            .cornerRadius(3)
+                        if b.logged {
+                            BarMark(x: .value("יום", b.day, unit: .day), y: .value("הפרש", b.deficit))
+                                .foregroundStyle(b.deficit >= 0 ? ChartColors.blue : ChartColors.orange)
+                                .cornerRadius(3)
+                        } else {
+                            PointMark(x: .value("יום", b.day, unit: .day), y: .value("הפרש", 0))
+                                .symbolSize(18)
+                                .foregroundStyle(ChartColors.reference.opacity(0.6))
+                        }
                     }
                     RuleMark(y: .value("אפס", 0)).foregroundStyle(Color.secondary.opacity(0.6))
                     if let selected {
                         RuleMark(x: .value("יום", selected.day, unit: .day))
                             .foregroundStyle(Color.secondary.opacity(0.3))
                             .annotation(position: .top) {
-                                Tooltip(title: shortDate(selected.day),
-                                        value: "שרפת \(Int(safe: selected.burned)) · אכלת \(Int(safe: selected.eaten))")
+                                ValueBubble(title: shortDate(selected.day),
+                                            value: selected.logged
+                                                ? "שרפת \(Int(safe: selected.burned)) · אכלת \(Int(safe: selected.eaten))"
+                                                : "לא נרשם אוכל (נספר כ‑0)")
                             }
                     }
                 }
                 .chartYAxis {
                     AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
                         AxisGridLine().foregroundStyle(Color.secondary.opacity(0.15))
-                        AxisValueLabel {
+                        AxisValueLabel(anchor: .trailing) {
                             if let v = value.as(Double.self) { Text("\(Int(safe: v))").font(.caption) }
                         }
                     }
                 }
-                .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                        AxisValueLabel(format: .dateTime.day().month(.abbreviated).locale(.he)).font(.caption)
-                    }
-                }
+                .dailyDateAxis(days.map(\.day))
                 .frame(height: 200)
                 // Time runs left to right like any chart, even in the right-to-left UI.
                 .environment(\.layoutDirection, .leftToRight)
@@ -536,11 +439,14 @@ private struct BalanceCard: View {
                 }
                 .accessibilityElement()
                 .accessibilityLabel("גרף אכלתי מול שרפתי")
-                .accessibilityValue("ב‑\(good) מתוך \(days.count) ימים אכלת פחות ממה ששרפת")
+                .accessibilityValue("ב‑\(good) מתוך \(logged.count) ימים שנרשמו אכלת פחות ממה ששרפת")
 
                 HStack(spacing: 14) {
                     LegendItem(color: ChartColors.blue, text: "מעל הקו: אכלת פחות (טוב לירידה)")
                     LegendItem(color: ChartColors.orange, text: "מתחת: אכלת יותר")
+                }
+                if unlogged > 0 {
+                    LegendItem(color: ChartColors.reference.opacity(0.6), text: "נקודה אפורה: יום בלי רישום (0)")
                 }
             }
         }
@@ -553,12 +459,17 @@ private struct ExpectedVsActualCard: View {
     var body: some View {
         let expected = progress.comparison.filter { $0.series == "צפוי לפי המאזן" }
         let actual = progress.comparison.filter { $0.series == "בפועל" }
-        if let exp = expected.last, let act = actual.last {
+        if expected.count < 2 {
             Card {
-                Label("צפוי מול בפועל", systemImage: "scope")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Headline(text: "לפי מה שאכלת היית אמור \(exp.kg <= 0 ? "לרדת" : "לעלות") \(kg(exp.kg)). בפועל \(act.kg <= 0 ? "ירדת" : "עלית") \(kg(act.kg)).")
+                CardHeader(title: "צפוי מול בפועל", symbol: "scope")
+                Headline(text: "יוצג אחרי \(ProgressModel.minDaysForComparison) ימים מתחילת המעקב",
+                         detail: "עד עכשיו: \(progress.balances.count) ימים מלאים. בטווח קצר יותר, תנודות של מים במשקל גדולות מהשינוי האמיתי.")
+            }
+        } else if let exp = expected.last, let act = actual.last {
+            Card {
+                CardHeader(title: "צפוי מול בפועל", symbol: "scope")
+                Headline(text: "לפי מה שאכלת היית אמור \(exp.kg <= 0 ? "לרדת" : "לעלות") \(kg(exp.kg)). בפועל \(act.kg <= 0 ? "ירדת" : "עלית") \(kg(act.kg)).",
+                         detail: "מאז \(shortDate(AppSettings.foodTrackingStart)), לפי השקילות.")
                 Chart(progress.comparison) { p in
                     LineMark(x: .value("תאריך", p.day), y: .value("שינוי", p.kg))
                         .foregroundStyle(by: .value("סדרה", p.series))
@@ -570,16 +481,12 @@ private struct ExpectedVsActualCard: View {
                 .chartYAxis {
                     AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
                         AxisGridLine().foregroundStyle(Color.secondary.opacity(0.15))
-                        AxisValueLabel {
+                        AxisValueLabel(anchor: .trailing) {
                             if let v = value.as(Double.self) { Text(String(format: "%.0f", v)).font(.caption) }
                         }
                     }
                 }
-                .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                        AxisValueLabel(format: .dateTime.day().month(.abbreviated).locale(.he)).font(.caption)
-                    }
-                }
+                .dailyDateAxis(progress.comparison.map(\.day))
                 .frame(height: 180)
                 // Time runs left to right like any chart, even in the right-to-left UI.
                 .environment(\.layoutDirection, .leftToRight)
@@ -600,9 +507,7 @@ private struct MacrosCard: View {
     var body: some View {
         if let m = progress.macros7 {
             Card {
-                Label("מה אכלתי בשבוע האחרון", systemImage: "fork.knife")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                CardHeader(title: "מה אכלתי בשבוע האחרון", symbol: "fork.knife")
                 Headline(text: "בממוצע \(Int(safe: m.kcal).formatted()) קלוריות ביום")
                 HStack(spacing: 8) {
                     StatTile(title: "חלבון ביום", value: "\(Int(safe: m.protein)) ג׳")

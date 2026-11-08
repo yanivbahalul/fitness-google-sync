@@ -16,6 +16,11 @@ enum AppSettings {
     static let notifyProblemsKey = "notifyProblems"
     static let expiryReminderKey = "expiryReminder"
     static let deficitGoalKey = "deficitGoal"
+    static let foodTrackingStartKey = "foodTrackingStart"
+    static let stepGoalKey = "stepGoal"
+    /// Activity page numbers: Apple Health's merged total (all sources, as the Health app
+    /// shows) instead of only what HealthBridge wrote.
+    static let activityAllSourcesKey = "activityAllSources"
 
     static func registerDefaults() {
         UserDefaults.standard.register(defaults: [
@@ -24,6 +29,8 @@ enum AppSettings {
             notifyProblemsKey: true,
             expiryReminderKey: true,
             deficitGoalKey: 500,
+            stepGoalKey: 10000,
+            activityAllSourcesKey: true,
         ])
     }
 
@@ -31,6 +38,21 @@ enum AppSettings {
     static var backgroundSync: Bool { UserDefaults.standard.bool(forKey: backgroundSyncKey) }
     static var notifyProblems: Bool { UserDefaults.standard.bool(forKey: notifyProblemsKey) }
     static var expiryReminder: Bool { UserDefaults.standard.bool(forKey: expiryReminderKey) }
+
+    /// Food logged before this day is ignored in the calorie balance and food statistics
+    /// (earlier logging was incomplete). Defaults to November 7, 2026.
+    static var foodTrackingStart: Date {
+        get {
+            let t = UserDefaults.standard.double(forKey: foodTrackingStartKey)
+            if t > 0 { return Date(timeIntervalSince1970: t) }
+            let c = DateComponents(calendar: Calendar.current, year: 2026, month: 11, day: 7)
+            return Calendar.current.startOfDay(for: c.date ?? Date())
+        }
+        set {
+            UserDefaults.standard.set(Calendar.current.startOfDay(for: newValue).timeIntervalSince1970,
+                                      forKey: foodTrackingStartKey)
+        }
+    }
 }
 
 /// Best-effort background sync. iOS decides when (and whether) it runs, typically a few

@@ -16,9 +16,14 @@ final class ProgressModel: ObservableObject {
         let day: Date
         let eaten: Double
         let burned: Double
-        var deficit: Double { burned - eaten }
+        /// False when no food was logged that day; such days count as balanced
+        /// (ate what was burned: deficit 0) so they don't distort totals or averages.
+        var logged = true
+        var deficit: Double { logged ? burned - eaten : 0 }
         var id: Date { day }
     }
+
+    var loggedDays: Int { balances.filter(\.logged).count }
 
     struct ComparePoint: Identifiable {
         let day: Date
@@ -41,6 +46,8 @@ final class ProgressModel: ObservableObject {
 
     /// Roughly 7,700 kcal per kg of body fat.
     static let kcalPerKg = 7700.0
+    /// Fewer logged days than this and daily water swings outweigh the real change.
+    static let minDaysForComparison = 7
 
     @Published var range: Range = .half
     @Published private(set) var weights: [WeightPoint] = []
@@ -51,6 +58,21 @@ final class ProgressModel: ObservableObject {
     @Published private(set) var loading = false
 
     private let store = HKHealthStore()
+
+    /// Weight on `date`, linearly interpolated between the nearest weigh-ins.
+    func weightAt(_ date: Date) -> Double? {
+        let before = weights.last { $0.date <= date }
+        let after = weights.first { $0.date > date }
+        switch (before, after) {
+        case let (b?, a?):
+            let span = a.date.timeIntervalSince(b.date)
+            guard span > 0 else { return b.kg }
+            return b.kg + (a.kg - b.kg) * date.timeIntervalSince(b.date) / span
+        case let (b?, nil): return b.kg
+        case let (nil, a?): return a.kg
+        default: return nil
+        }
+    }
 
     var currentWeight: Double? { trend.last?.kg ?? weights.last?.kg }
     var startWeight: Double? { trend.first?.kg ?? weights.first?.kg }
@@ -95,7 +117,7 @@ final class ProgressModel: ObservableObject {
 
         // Weight (all sources in Apple Health).
         let massType = HKQuantityType(.bodyMass)
-        try? await store.requestAuthorization(toShare: [], read: [massType])
+        await HealthAuthorization.request()
         let raw = (try? await samples(of: massType, from: start)) ?? []
         // One point per day (the day's last reading).
         var byDay: [Date: HKQuantitySample] = [:]
@@ -119,32 +141,46 @@ final class ProgressModel: ObservableObject {
             let t = eatenTotals[day] ?? (0, 0, 0, 0)
             eatenTotals[day] = (t.kcal + kcal, t.protein, t.carbs, t.fat)
         }
+        let foodStart = AppSettings.foodTrackingStart
         var days: [DayBalance] = []
         for offset in 0..<range.rawValue {
             let day = calendar.date(byAdding: .day, value: offset, to: start)!
-            guard day < today else { continue }  // today is incomplete
+            guard day < today, day >= foodStart else { continue }  // today is incomplete
             let eaten = eatenTotals[day]?.kcal ?? 0
-            guard eaten > 0, let b = burned[day], b > 0 else { continue }
-            days.append(DayBalance(day: day, eaten: eaten, burned: b))
+            if eaten > 0, let b = burned[day], b > 0 {
+                days.append(DayBalance(day: day, eaten: eaten, burned: b))
+            } else {
+                // Not logged (or no burn data): neutral day, deficit 0.
+                let b = burned[day] ?? 0
+                days.append(DayBalance(day: day, eaten: b, burned: b, logged: false))
+            }
         }
         balances = days
 
-        // Expected (from cumulative deficit) vs actual weight change, both in kg.
+        // Expected (from the cumulative calorie balance) vs actual weight change, both in kg,
+        // both measured from the same starting point: the weight on the food tracking start
+        // date (interpolated between weigh-ins). Only meaningful after a week of logging.
         var points: [ComparePoint] = []
-        if let base = trend.first {
+        if days.count >= Self.minDaysForComparison, let w0 = weightAt(foodStart) {
+            let start0 = calendar.startOfDay(for: foodStart)
+            points.append(ComparePoint(day: start0, series: "צפוי לפי המאזן", kg: 0))
+            points.append(ComparePoint(day: start0, series: "בפועל", kg: 0))
             var cumulative = 0.0
-            for b in days where b.day >= calendar.startOfDay(for: base.date) {
+            for b in days {
                 cumulative += b.deficit
-                points.append(ComparePoint(day: b.day, series: "צפוי לפי המאזן", kg: -cumulative / Self.kcalPerKg))
+                // The effect of a day's balance shows at the end of that day.
+                let end = calendar.date(byAdding: .day, value: 1, to: b.day)!
+                points.append(ComparePoint(day: end, series: "צפוי לפי המאזן", kg: -cumulative / Self.kcalPerKg))
             }
-            for p in trend {
-                points.append(ComparePoint(day: p.date, series: "בפועל", kg: p.kg - base.kg))
+            for p in weights where p.date > start0 {
+                points.append(ComparePoint(day: p.date, series: "בפועל", kg: p.kg - w0))
             }
         }
         comparison = points
 
         // 7-day macro averages over days with logged food.
         let last7 = (1...7).compactMap { calendar.date(byAdding: .day, value: -$0, to: today) }
+            .filter { $0 >= foodStart }
             .compactMap { eatenTotals[$0] }
         if !last7.isEmpty {
             let n = Double(last7.count)

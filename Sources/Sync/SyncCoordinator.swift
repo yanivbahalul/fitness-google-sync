@@ -40,10 +40,15 @@ struct SyncOutcome {
     var syncedTypes = 0
     var failedTypes: [String] = []
     var records = 0
+    /// Types not fetched this time because they were fetched recently (see refreshInterval).
+    var skippedTypes = 0
     var error: String?
+    /// Set when the sync didn't run because one just finished.
+    var note: String?
 
     var summary: String {
         if let error { return error }
+        if let note { return note }
         if failedTypes.isEmpty { return "הסנכרון הושלם: \(syncedTypes) סוגי נתונים, \(records) רשומות." }
         return "סונכרנו \(syncedTypes) סוגי נתונים. לא סונכרנו: \(failedTypes.joined(separator: ", "))."
     }
@@ -55,6 +60,8 @@ struct TodaySummary: Codable, Equatable {
     var sleepMinutes: Int?
     var restingHeartRate: Int?
     var activeKcal: Int?
+    /// Time of the latest band data Google had at the last sync (how fresh the numbers are).
+    var dataThrough: Date?
 }
 
 @MainActor
@@ -84,6 +91,8 @@ final class SyncCoordinator: ObservableObject {
     private let healthKitWriter = HealthKitWriter()
 
     private let maxAutomaticDays = 14
+    /// Shortcut / background syncs within this time of the last sync are skipped.
+    private static let repeatGap: TimeInterval = 5 * 60
     private static let lastSyncKey = "lastSuccessfulSync"
     private static let perItemKey = "lastSyncPerItem"
     private static let enabledKey = "enabledItems"
@@ -166,12 +175,19 @@ final class SyncCoordinator: ObservableObject {
             outcome.error = "סנכרון כבר מתבצע."
             return outcome
         }
+        // Shortcuts and background runs right after another sync would fetch the same data.
+        if trigger == .shortcut || trigger == .background, let last = lastSyncDate,
+           Date().timeIntervalSince(last) < Self.repeatGap {
+            let minutes = max(1, Int(Date().timeIntervalSince(last) / 60))
+            outcome.note = "סונכרן לפני \(minutes) דק׳, אין צורך לסנכרן שוב."
+            return outcome
+        }
         guard auth.isSignedIn else {
             outcome.error = "יש להתחבר קודם ל‑Google."
             if trigger == .manual { lastError = outcome.error }
             return outcome
         }
-        let selected = items.filter(isEnabled)
+        var selected = items.filter(isEnabled)
         guard !selected.isEmpty else {
             outcome.error = "לא נבחר אף סוג נתונים לסנכרון."
             if trigger == .manual { lastError = outcome.error }
@@ -186,9 +202,41 @@ final class SyncCoordinator: ObservableObject {
 
         let effectiveRange = trigger == .manual ? range : .automatic
 
+        // Asking for Apple Health permission shows a sheet, which iOS doesn't allow while the
+        // app runs in the background (Shortcuts, background refresh). Only ask in the
+        // foreground; otherwise sync the types that are already allowed.
+        if trigger == .manual || trigger == .appOpen {
+            await HealthAuthorization.request()
+        } else {
+            let allowed = selected.filter { healthKitWriter.store.authorizationStatus(for: $0.hkType) == .sharingAuthorized }
+            for item in selected where !allowed.contains(where: { $0.id == item.id }) {
+                status[item.id] = .failed(message: "אין הרשאה ב‑Apple Health")
+                outcome.failedTypes.append(item.name)
+            }
+            selected = allowed
+            guard !selected.isEmpty else {
+                outcome.error = "אין הרשאת כתיבה ל‑Apple Health. פתח את האפליקציה ואשר הרשאות."
+                finish(outcome, trigger: trigger, rangeTitle: effectiveRange.title)
+                return outcome
+            }
+        }
+
+        // Slow-changing types are fetched only when due. A manual sync with a chosen range
+        // always fetches everything; a manual sync on the automatic range waits at most an hour.
+        if effectiveRange == .automatic {
+            let now = Date()
+            let due = selected.filter { item in
+                guard item.refreshInterval > 0, let last = lastSyncPerItem[item.id] else { return true }
+                let interval = trigger == .manual ? min(item.refreshInterval, 3600) : item.refreshInterval
+                return now.timeIntervalSince(last) >= interval
+            }
+            if !due.isEmpty {
+                outcome.skippedTypes = selected.count - due.count
+                selected = due
+            }
+        }
+
         do {
-            try await healthKitWriter.requestAuthorization(toShare: Set(selected.map(\.hkType)),
-                                                          read: [HKQuantityType(.stepCount)])
             // Refresh the access token once up front so the parallel requests share it.
             _ = try await auth.validAccessToken()
         } catch {
@@ -223,7 +271,9 @@ final class SyncCoordinator: ObservableObject {
         }
 
         // Write to Apple Health.
-        var todaySummary = TodaySummary()
+        // Keep today's values from types skipped this time.
+        var todaySummary = lastSyncDate.map { Calendar.current.isDate($0, inSameDayAs: now) } == true
+            ? (today ?? TodaySummary()) : TodaySummary()
         for item in selected {
             do {
                 let samples = try fetched[item.id]!.get()
@@ -303,7 +353,8 @@ final class SyncCoordinator: ObservableObject {
         }
         history = SyncHistory.append(SyncLogEntry(
             date: Date(), trigger: trigger, rangeTitle: rangeTitle,
-            records: outcome.records, syncedTypes: outcome.syncedTypes, failedTypes: outcome.failedTypes))
+            records: outcome.records, syncedTypes: outcome.syncedTypes, failedTypes: outcome.failedTypes,
+            error: outcome.error, skippedTypes: outcome.skippedTypes))
 
         // Tell the user about problems in syncs they didn't start by hand.
         guard trigger != .manual, AppSettings.notifyProblems else { return }
@@ -320,6 +371,13 @@ final class SyncCoordinator: ObservableObject {
         let calendar = Calendar.current
         let startOfToday = calendar.startOfDay(for: now)
         let todays = samples.compactMap { $0 as? HKQuantitySample }.filter { $0.startDate >= startOfToday }
+
+        // Freshness: the latest heart-rate reading (every few minutes while worn) or step hour.
+        if item.hkType.identifier == HKQuantityTypeIdentifier.heartRate.rawValue
+            || item.hkType.identifier == HKQuantityTypeIdentifier.stepCount.rawValue,
+           let latest = todays.map(\.startDate).max() {
+            summary.dataThrough = max(summary.dataThrough ?? latest, latest)
+        }
 
         switch item.hkType.identifier {
         case HKQuantityTypeIdentifier.stepCount.rawValue:
@@ -367,7 +425,7 @@ final class SyncCoordinator: ObservableObject {
         let start = calendar.date(byAdding: .day, value: -(days - 1), to: today)!
         let end = calendar.date(byAdding: .day, value: 1, to: today)!
 
-        try await healthKitWriter.requestAuthorization(toShare: [], read: [HKQuantityType(.stepCount)])
+        await HealthAuthorization.request()
         let google = try await healthClient.dailyRollUp(dataType: "steps", valueKey: "steps", from: start, to: end)
         let googleByDay = Dictionary(google.map { ($0.day, $0.value) }, uniquingKeysWith: +)
         let mine = try await healthKitWriter.dailySteps(from: start, days: days, onlyThisApp: true)
