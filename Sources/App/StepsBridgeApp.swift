@@ -31,12 +31,12 @@ struct StepsBridgeApp: App {
         }
     }
 
-    /// Syncs when the app comes to the foreground, at most once every 30 minutes.
+    /// Syncs when the app comes to the foreground, at most once every 5 minutes.
     @MainActor
     private func autoSyncIfNeeded() {
         let sync = AppState.sync
         guard AppSettings.autoSyncOnOpen, AppState.auth.isSignedIn, !sync.isSyncing else { return }
-        if let last = sync.lastSyncDate, Date().timeIntervalSince(last) < 30 * 60 { return }
+        if let last = sync.lastSyncDate, Date().timeIntervalSince(last) < 5 * 60 { return }
         Task { await sync.syncNow(trigger: .appOpen) }
     }
 }

@@ -179,6 +179,8 @@ final class GoogleHealthClient {
         let token = try await auth.validAccessToken()
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        // A stalled connection fails after 30 s instead of keeping the sync open for minutes.
+        request.timeoutInterval = 30
 
         var attempt = 0
         while true {

@@ -221,6 +221,17 @@ struct HistoryView: View {
     @EnvironmentObject private var sync: SyncCoordinator
     @Environment(\.dismiss) private var dismiss
 
+    private func summary(_ entry: SyncLogEntry) -> String {
+        if entry.note != nil { return entry.trigger.title }
+        var parts = [entry.trigger.title]
+        if !entry.rangeTitle.isEmpty { parts.append(entry.rangeTitle) }
+        parts.append("\(entry.syncedTypes) סוגים")
+        parts.append("\(entry.records.formatted()) רשומות")
+        if let skipped = entry.skippedTypes, skipped > 0 { parts.append("\(skipped) עודכנו לאחרונה") }
+        if let duration = entry.duration { parts.append("\(Int(duration.rounded())) שנ׳") }
+        return parts.joined(separator: " · ")
+    }
+
     var body: some View {
         NavigationStack {
             Group {
@@ -240,10 +251,14 @@ struct HistoryView: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(entry.date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, locale: .he)))
                                     .font(.body.weight(.semibold))
-                                Text("\(entry.trigger.title) · \(entry.rangeTitle) · \(entry.syncedTypes) סוגים · \(entry.records) רשומות"
-                                     + ((entry.skippedTypes ?? 0) > 0 ? " · \(entry.skippedTypes ?? 0) עודכנו לאחרונה" : ""))
+                                Text(summary(entry))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                                if let note = entry.note {
+                                    Text(note)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                                 if let error = entry.error {
                                     Text(error)
                                         .font(.caption)

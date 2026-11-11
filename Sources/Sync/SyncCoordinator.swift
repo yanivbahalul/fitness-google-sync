@@ -1,5 +1,6 @@
 import Foundation
 import HealthKit
+import UIKit
 
 /// How far back a sync reaches.
 enum SyncRange: String, CaseIterable, Identifiable {
@@ -93,6 +94,17 @@ final class SyncCoordinator: ObservableObject {
     private let maxAutomaticDays = 14
     /// Shortcut / background syncs within this time of the last sync are skipped.
     private static let repeatGap: TimeInterval = 5 * 60
+    /// Set while a sync runs; still set on the next launch = the sync was cut off
+    /// (the app was closed or killed by iOS before it finished).
+    private static let inProgressKey = "syncInProgress"
+    private var startedAt: Date?
+    private var backgroundTask = UIBackgroundTaskIdentifier.invalid
+
+    private func endBackgroundTask() {
+        guard backgroundTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTask)
+        backgroundTask = .invalid
+    }
     private static let lastSyncKey = "lastSuccessfulSync"
     private static let perItemKey = "lastSyncPerItem"
     private static let enabledKey = "enabledItems"
@@ -116,6 +128,14 @@ final class SyncCoordinator: ObservableObject {
             self.enabled = Set(SyncCatalog.all.map(\.id)).subtracting(SyncCatalog.offByDefault)
         }
         self.range = SyncRange(rawValue: defaults.string(forKey: Self.rangeKey) ?? "") ?? .automatic
+        if let started = defaults.object(forKey: Self.inProgressKey) as? Date {
+            defaults.removeObject(forKey: Self.inProgressKey)
+            let triggerRaw = defaults.string(forKey: Self.inProgressKey + ".trigger") ?? ""
+            history = SyncHistory.append(SyncLogEntry(
+                date: started, trigger: SyncTrigger(rawValue: triggerRaw) ?? .manual, rangeTitle: "",
+                records: 0, syncedTypes: 0, failedTypes: [],
+                error: "הסנכרון נקטע לפני שהסתיים: האפליקציה נסגרה או ש‑iOS עצר אותה. סנכרן שוב."))
+        }
         if let data = defaults.data(forKey: Self.todayKey),
            let saved = try? JSONDecoder().decode(TodaySummary.self, from: data),
            let last = lastSyncDate, Calendar.current.isDateInToday(last) {
@@ -173,6 +193,7 @@ final class SyncCoordinator: ObservableObject {
         var outcome = SyncOutcome()
         guard !isSyncing else {
             outcome.error = "סנכרון כבר מתבצע."
+            logSkipped(trigger: trigger, note: "דולג: סנכרון אחר כבר רץ באותו רגע")
             return outcome
         }
         // Shortcuts and background runs right after another sync would fetch the same data.
@@ -180,17 +201,18 @@ final class SyncCoordinator: ObservableObject {
            Date().timeIntervalSince(last) < Self.repeatGap {
             let minutes = max(1, Int(Date().timeIntervalSince(last) / 60))
             outcome.note = "סונכרן לפני \(minutes) דק׳, אין צורך לסנכרן שוב."
+            logSkipped(trigger: trigger, note: "דולג: סונכרן לפני \(minutes) דק׳")
             return outcome
         }
         guard auth.isSignedIn else {
             outcome.error = "יש להתחבר קודם ל‑Google."
-            if trigger == .manual { lastError = outcome.error }
+            finish(outcome, trigger: trigger, rangeTitle: "")
             return outcome
         }
         var selected = items.filter(isEnabled)
         guard !selected.isEmpty else {
             outcome.error = "לא נבחר אף סוג נתונים לסנכרון."
-            if trigger == .manual { lastError = outcome.error }
+            finish(outcome, trigger: trigger, rangeTitle: "")
             return outcome
         }
 
@@ -198,7 +220,19 @@ final class SyncCoordinator: ObservableObject {
         progress = 0
         lastError = nil
         needsReconnect = false
-        defer { isSyncing = false }
+        startedAt = Date()
+        UserDefaults.standard.set(startedAt, forKey: Self.inProgressKey)
+        UserDefaults.standard.set(trigger.rawValue, forKey: Self.inProgressKey + ".trigger")
+        // Ask iOS for time to finish if the user leaves the app mid-sync; without this the
+        // app is suspended within seconds and the sync never completes or gets logged.
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "HealthBridge sync") { [weak self] in
+            Task { @MainActor in self?.endBackgroundTask() }
+        }
+        defer {
+            isSyncing = false
+            startedAt = nil
+            endBackgroundTask()
+        }
 
         let effectiveRange = trigger == .manual ? range : .automatic
 
@@ -351,10 +385,12 @@ final class SyncCoordinator: ObservableObject {
         if trigger == .manual || trigger == .appOpen {
             lastError = outcome.error
         }
+        UserDefaults.standard.removeObject(forKey: Self.inProgressKey)
         history = SyncHistory.append(SyncLogEntry(
-            date: Date(), trigger: trigger, rangeTitle: rangeTitle,
+            date: startedAt ?? Date(), trigger: trigger, rangeTitle: rangeTitle,
             records: outcome.records, syncedTypes: outcome.syncedTypes, failedTypes: outcome.failedTypes,
-            error: outcome.error, skippedTypes: outcome.skippedTypes))
+            error: outcome.error, skippedTypes: outcome.skippedTypes,
+            duration: startedAt.map { Date().timeIntervalSince($0) }))
 
         // Tell the user about problems in syncs they didn't start by hand.
         guard trigger != .manual, AppSettings.notifyProblems else { return }
@@ -365,6 +401,13 @@ final class SyncCoordinator: ObservableObject {
         } else if let error = outcome.error {
             Notifier.notify(title: "הסנכרון של HealthBridge נכשל", body: error, id: "sync-failed")
         }
+    }
+
+    /// Records a sync request that didn't run, so every tap shows up in the log.
+    private func logSkipped(trigger: SyncTrigger, note: String) {
+        history = SyncHistory.append(SyncLogEntry(
+            date: Date(), trigger: trigger, rangeTitle: "", records: 0, syncedTypes: 0,
+            failedTypes: [], note: note))
     }
 
     private static func addToToday(_ summary: inout TodaySummary, item: SyncItem, samples: [HKSample], now: Date) {
