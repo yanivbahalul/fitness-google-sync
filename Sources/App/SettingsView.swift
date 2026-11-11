@@ -71,7 +71,10 @@ struct SettingsView: View {
                     Toggle(isOn: $backgroundSync) {
                         SettingLabel("ברקע", symbol: "moon.zzz")
                     }
-                    .onChange(of: backgroundSync) { _ in BackgroundSync.schedule() }
+                    .onChange(of: backgroundSync) { _ in
+                            BackgroundSync.schedule()
+                            HealthObserver.update()
+                        }
                     VStack(alignment: .leading, spacing: 6) {
                         SettingLabel("בשעה קבועה (קיצורים)", symbol: "square.stack.3d.up")
                         Text("קיצורים ← אוטומציה ← שעה ביום ← \"סנכרן את HealthBridge\"")
