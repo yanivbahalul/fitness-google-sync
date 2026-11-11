@@ -34,7 +34,7 @@ final class GoogleHealthClient {
         method: ListMethod = .list,
         pageSize: Int = 10000,
         includeDataSourceFamily: Bool = true,
-        maxPages: Int = 60
+        maxPages: Int = 5000
     ) async throws -> [[String: Any]] {
         var results: [[String: Any]] = []
         try await forEachPoint(dataType: dataType, pointKey: pointKey, since: since, timeOf: timeOf,
@@ -58,7 +58,7 @@ final class GoogleHealthClient {
         method: ListMethod = .list,
         pageSize: Int = 10000,
         includeDataSourceFamily: Bool = true,
-        maxPages: Int = 60,
+        maxPages: Int = 5000,
         handle: ([String: Any]) -> Void
     ) async throws {
         var pageToken: String?

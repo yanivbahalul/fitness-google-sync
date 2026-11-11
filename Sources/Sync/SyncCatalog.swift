@@ -355,8 +355,9 @@ enum SyncCatalog {
     private static var heartRate: SyncItem {
         let type = HKQuantityType(.heartRate)
         let bpm = HKUnit.count().unitDivided(by: .minute())
-        let window: TimeInterval = 300
         return SyncItem(name: "דופק", hkType: type) { client, since, now in
+            // 5-minute averages normally; hourly for history restores longer than a month.
+            let window: TimeInterval = now.timeIntervalSince(since) > 31 * 86400 ? 3600 : 300
             var averages: [(start: Date, value: Double)] = []
             do {
                 averages = try await client.rollUp(dataType: "heart-rate", valueKey: "heartRate",

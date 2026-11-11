@@ -38,10 +38,10 @@ struct SettingsView: View {
                             SettingLabel("סנכרון אחרון", symbol: "clock")
                         }
                     }
-                    Picker(selection: $sync.range) {
-                        ForEach(SyncRange.allCases) { Text($0.title).tag($0) }
+                    NavigationLink {
+                        RestoreHistoryView()
                     } label: {
-                        SettingLabel("טווח סנכרון ידני", symbol: "calendar")
+                        SettingLabel("שחזור היסטוריה", symbol: "clock.arrow.circlepath")
                     }
                     NavigationLink {
                         SyncTypesView()
@@ -373,3 +373,79 @@ struct StepsCheckView: View {
     }
 }
 
+
+/// Re-syncs a chosen period (up to all of it) from Google. Separate from the daily sync
+/// button, which always syncs only what's new.
+struct RestoreHistoryView: View {
+    @EnvironmentObject private var sync: SyncCoordinator
+    @State private var range: RestoreRange = .month
+    @State private var customStart = Calendar.current.date(byAdding: .year, value: -1, to: Date()) ?? Date()
+    @State private var running = false
+    @State private var result: String?
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("כמה אחורה", selection: $range) {
+                    ForEach(RestoreRange.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+                if range == .custom {
+                    DatePicker("החל מ", selection: $customStart, in: ...Date(), displayedComponents: .date)
+                }
+            } header: {
+                Text("כמה אחורה")
+            } footer: {
+                Text("כל סוגי הנתונים שנבחרו נמשכים מחדש מ‑Google ומחליפים את מה ש‑HealthBridge כתבה בתקופה. "
+                     + "יותר משלושה ימים נכתבים לפי שעה. תקופה ארוכה יכולה לקחת כמה דקות; השאר את האפליקציה פתוחה.")
+            }
+
+            Section {
+                PrimaryButton(title: running ? "משחזר…" : "שחזר", symbol: "clock.arrow.circlepath", busy: running) {
+                    Task { await restore() }
+                }
+                .disabled(running || sync.isSyncing)
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+
+                if running {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ProgressView(value: sync.progress)
+                        if let status = sync.restoreStatus {
+                            Text(status).font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                } else if let result {
+                    Text(result).font(.footnote)
+                }
+            }
+        }
+        .navigationTitle("שחזור היסטוריה")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func restore() async {
+        running = true
+        result = nil
+        defer { running = false }
+        let calendar = Calendar.current
+        let start: Date
+        switch range {
+        case .custom:
+            start = customStart
+        case .all:
+            guard let first = await sync.earliestDataDate() else {
+                result = "לא נמצאו נתונים ב‑Google."
+                return
+            }
+            start = first
+        default:
+            start = calendar.date(byAdding: .day, value: -((range.days ?? 30) - 1), to: calendar.startOfDay(for: Date()))!
+        }
+        let outcome = await sync.restoreHistory(from: start)
+        result = outcome.error ?? "שוחזר מ‑\(start.formatted(.dateTime.day().month().year().locale(.he))): "
+            + "\(outcome.syncedTypes) סוגים, \(outcome.records.formatted()) רשומות."
+    }
+}

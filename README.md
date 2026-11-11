@@ -108,7 +108,8 @@ compact **Sync now** button in the top bar and everything else in **Settings**.
 | **17 data types** | Steps, distance, active energy, floors, workouts, VO2 max, heart rate, resting heart rate, HRV, blood oxygen, respiratory rate, sleep with stages, weight, body fat, height, water, dietary energy. Each can be switched on or off in *Settings → What to sync*. |
 | **Steps match Google exactly** | Daily step totals come from Google's own daily roll-up (the number the Google Health app shows); per-minute values (as Google records them) spread that total across the day, so Apple Health shows the same timeline. *Settings → Steps check* compares the last 7 days side by side. |
 | **No duplicates** | Every sync replaces only what the sync itself wrote in its window. Food you log and weights you enter are never touched. |
-| **Automatic** | Syncs when the app opens (at most every 5 min), tries in the background, and has a *Sync HealthBridge* Shortcuts action. Catches up per type after missed days (up to 14), or re-syncs 3–90 days on demand. |
+| **Automatic** | Syncs when the app opens (at most every 5 min), tries in the background, and has a *Sync HealthBridge* Shortcuts action. Catches up per type after missed days (up to 14). |
+| **History restore** | *Settings → Restore history* re-syncs a week, a month, 3 months, a year, from a chosen date, or everything since the band's first day. Separate from the sync button, which always does the daily sync. |
 | **Light on requests** | Steps, distance, calories and heart rate are fetched every sync; sleep, weight, body and daily metrics every 4 hours, workouts hourly (about half the API calls). A Shortcut or background run within 5 minutes of another sync is skipped. |
 | **History and notifications** | A sync log with trigger, types, records and errors. Notifications when an automatic sync fails or needs a reconnect, and the day before the free-signing build expires. |
 
