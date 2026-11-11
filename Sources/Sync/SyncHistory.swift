@@ -2,7 +2,7 @@ import Foundation
 
 /// What started a sync.
 enum SyncTrigger: String, Codable {
-    case manual, appOpen, background, shortcut
+    case manual, appOpen, background, shortcut, healthUpdate
 
     var title: String {
         switch self {
@@ -10,6 +10,7 @@ enum SyncTrigger: String, Codable {
         case .appOpen: return "בפתיחת האפליקציה"
         case .background: return "ברקע"
         case .shortcut: return "קיצור דרך"
+        case .healthUpdate: return "צעדים חדשים ב‑Apple Health"
         }
     }
 
@@ -19,6 +20,7 @@ enum SyncTrigger: String, Codable {
         case .appOpen: return "iphone"
         case .background: return "moon.zzz.fill"
         case .shortcut: return "square.stack.3d.up.fill"
+        case .healthUpdate: return "heart.text.square.fill"
         }
     }
 }

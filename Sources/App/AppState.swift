@@ -78,7 +78,7 @@ enum BackgroundSync {
         BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: taskID)
         guard AppSettings.backgroundSync else { return }
         let request = BGAppRefreshTaskRequest(identifier: taskID)
-        request.earliestBeginDate = Date().addingTimeInterval(4 * 3600)
+        request.earliestBeginDate = Date().addingTimeInterval(3600)
         try? BGTaskScheduler.shared.submit(request)
     }
 }

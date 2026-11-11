@@ -7,6 +7,7 @@ struct StepsBridgeApp: App {
     init() {
         AppSettings.registerDefaults()
         BackgroundSync.register()
+        HealthObserver.update()
     }
 
     var body: some Scene {

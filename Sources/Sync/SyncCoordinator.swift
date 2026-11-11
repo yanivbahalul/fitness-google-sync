@@ -190,8 +190,16 @@ final class SyncCoordinator: ObservableObject {
             logSkipped(trigger: trigger, note: "דולג: סנכרון אחר כבר רץ באותו רגע")
             return outcome
         }
+        // Apple Health can't be written while the phone is locked. A background wake-up then
+        // just waits for the next one (not logged, it would fill the log every hour); a
+        // Shortcut run from the lock screen is logged so it's clear why nothing happened.
+        if trigger != .manual, trigger != .appOpen, !UIApplication.shared.isProtectedDataAvailable {
+            if trigger == .shortcut { logSkipped(trigger: trigger, note: "דולג: הטלפון נעול, Apple Health לא זמין") }
+            outcome.note = "הטלפון נעול. פתח אותו ונסה שוב."
+            return outcome
+        }
         // Shortcuts and background runs right after another sync would fetch the same data.
-        if trigger == .shortcut || trigger == .background, let last = lastSyncDate,
+        if trigger == .shortcut || trigger == .background || trigger == .healthUpdate, let last = lastSyncDate,
            Date().timeIntervalSince(last) < Self.repeatGap {
             let minutes = max(1, Int(Date().timeIntervalSince(last) / 60))
             outcome.note = "סונכרן לפני \(minutes) דק׳, אין צורך לסנכרן שוב."
