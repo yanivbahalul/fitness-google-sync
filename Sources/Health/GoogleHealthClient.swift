@@ -34,7 +34,7 @@ final class GoogleHealthClient {
         method: ListMethod = .list,
         pageSize: Int = 10000,
         includeDataSourceFamily: Bool = true,
-        maxPages: Int = 60
+        maxPages: Int = 5000
     ) async throws -> [[String: Any]] {
         var results: [[String: Any]] = []
         try await forEachPoint(dataType: dataType, pointKey: pointKey, since: since, timeOf: timeOf,
@@ -58,7 +58,7 @@ final class GoogleHealthClient {
         method: ListMethod = .list,
         pageSize: Int = 10000,
         includeDataSourceFamily: Bool = true,
-        maxPages: Int = 60,
+        maxPages: Int = 5000,
         handle: ([String: Any]) -> Void
     ) async throws {
         var pageToken: String?
@@ -179,6 +179,8 @@ final class GoogleHealthClient {
         let token = try await auth.validAccessToken()
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        // A stalled connection fails after 30 s instead of keeping the sync open for minutes.
+        request.timeoutInterval = 30
 
         var attempt = 0
         while true {

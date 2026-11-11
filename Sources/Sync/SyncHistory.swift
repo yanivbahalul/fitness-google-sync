@@ -36,6 +36,10 @@ struct SyncLogEntry: Codable, Identifiable {
     var error: String? = nil
     /// Slow-changing types not fetched because they were fetched recently.
     var skippedTypes: Int? = nil
+    /// Why nothing was fetched although a sync was requested (e.g. one had just finished).
+    var note: String? = nil
+    /// How long the sync took, in seconds.
+    var duration: Double? = nil
 }
 
 /// The last 50 syncs, persisted.

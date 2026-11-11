@@ -1,30 +1,30 @@
 import Foundation
 import HealthKit
+import UIKit
 
-/// How far back a sync reaches.
-enum SyncRange: String, CaseIterable, Identifiable {
-    case automatic, days3, days7, days14, days30, days90
+/// How far back "Restore history" reaches. The sync button itself always does the daily sync.
+enum RestoreRange: String, CaseIterable, Identifiable {
+    case week, month, quarter, year, all, custom
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .automatic: return "אוטומטי"
-        case .days3: return "3 ימים"
-        case .days7: return "שבוע"
-        case .days14: return "14 יום"
-        case .days30: return "30 יום"
-        case .days90: return "90 יום"
+        case .week: return "שבוע"
+        case .month: return "חודש"
+        case .quarter: return "3 חודשים"
+        case .year: return "שנה"
+        case .all: return "הכל, מהיום הראשון"
+        case .custom: return "מתאריך…"
         }
     }
 
     var days: Int? {
         switch self {
-        case .automatic: return nil
-        case .days3: return 3
-        case .days7: return 7
-        case .days14: return 14
-        case .days30: return 30
-        case .days90: return 90
+        case .week: return 7
+        case .month: return 30
+        case .quarter: return 90
+        case .year: return 365
+        case .all, .custom: return nil
         }
     }
 }
@@ -82,9 +82,8 @@ final class SyncCoordinator: ObservableObject {
     @Published var enabled: Set<String> {
         didSet { UserDefaults.standard.set(Array(enabled), forKey: Self.enabledKey) }
     }
-    @Published var range: SyncRange {
-        didSet { UserDefaults.standard.set(range.rawValue, forKey: Self.rangeKey) }
-    }
+    /// What a history restore is doing right now ("3/17: steps"), nil otherwise.
+    @Published private(set) var restoreStatus: String?
 
     private let auth: GoogleAuthManager
     private let healthClient: GoogleHealthClient
@@ -93,10 +92,20 @@ final class SyncCoordinator: ObservableObject {
     private let maxAutomaticDays = 14
     /// Shortcut / background syncs within this time of the last sync are skipped.
     private static let repeatGap: TimeInterval = 5 * 60
+    /// Set while a sync runs; still set on the next launch = the sync was cut off
+    /// (the app was closed or killed by iOS before it finished).
+    private static let inProgressKey = "syncInProgress"
+    private var startedAt: Date?
+    private var backgroundTask = UIBackgroundTaskIdentifier.invalid
+
+    private func endBackgroundTask() {
+        guard backgroundTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTask)
+        backgroundTask = .invalid
+    }
     private static let lastSyncKey = "lastSuccessfulSync"
     private static let perItemKey = "lastSyncPerItem"
     private static let enabledKey = "enabledItems"
-    private static let rangeKey = "syncRange"
     private static let todayKey = "todaySummary"
 
     /// Last successful sync per data type (HealthKit identifier → date).
@@ -115,7 +124,14 @@ final class SyncCoordinator: ObservableObject {
         } else {
             self.enabled = Set(SyncCatalog.all.map(\.id)).subtracting(SyncCatalog.offByDefault)
         }
-        self.range = SyncRange(rawValue: defaults.string(forKey: Self.rangeKey) ?? "") ?? .automatic
+        if let started = defaults.object(forKey: Self.inProgressKey) as? Date {
+            defaults.removeObject(forKey: Self.inProgressKey)
+            let triggerRaw = defaults.string(forKey: Self.inProgressKey + ".trigger") ?? ""
+            history = SyncHistory.append(SyncLogEntry(
+                date: started, trigger: SyncTrigger(rawValue: triggerRaw) ?? .manual, rangeTitle: "",
+                records: 0, syncedTypes: 0, failedTypes: [],
+                error: "הסנכרון נקטע לפני שהסתיים: האפליקציה נסגרה או ש‑iOS עצר אותה. סנכרן שוב."))
+        }
         if let data = defaults.data(forKey: Self.todayKey),
            let saved = try? JSONDecoder().decode(TodaySummary.self, from: data),
            let last = lastSyncDate, Calendar.current.isDateInToday(last) {
@@ -154,25 +170,24 @@ final class SyncCoordinator: ObservableObject {
     /// Automatic: from the start of the day before that item's last sync (covers last
     /// night's sleep and late-finalized daily values; synced daily = yesterday + today),
     /// so switching a type back on catches up the days it missed. At most 14 days.
-    private func windowStart(for item: SyncItem, now: Date, range: SyncRange) -> Date {
+    private func windowStart(for item: SyncItem, now: Date) -> Date {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: now)
-        if let days = range.days {
-            return calendar.date(byAdding: .day, value: -(days - 1), to: today)!
-        }
         let earliest = calendar.date(byAdding: .day, value: -maxAutomaticDays, to: today)!
         guard let last = lastSyncPerItem[item.id] ?? lastSyncDate else { return earliest }
         let fromLast = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: last))!
         return max(earliest, min(fromLast, today))
     }
 
-    /// Runs a sync. Automatic triggers (app open, background, Shortcuts) always use the
-    /// automatic range; the range picker applies to manual syncs.
+    /// Runs the daily sync, or, with `restoreFrom`, re-syncs everything from that date
+    /// (history restore: every type, one at a time to keep memory low).
     @discardableResult
-    func syncNow(trigger: SyncTrigger = .manual) async -> SyncOutcome {
+    func syncNow(trigger: SyncTrigger = .manual, restoreFrom: Date? = nil) async -> SyncOutcome {
         var outcome = SyncOutcome()
+        let title = restoreFrom.map { "שחזור מ‑\($0.formatted(.dateTime.day().month().year().locale(.he)))" } ?? "יומי"
         guard !isSyncing else {
             outcome.error = "סנכרון כבר מתבצע."
+            logSkipped(trigger: trigger, note: "דולג: סנכרון אחר כבר רץ באותו רגע")
             return outcome
         }
         // Shortcuts and background runs right after another sync would fetch the same data.
@@ -180,17 +195,18 @@ final class SyncCoordinator: ObservableObject {
            Date().timeIntervalSince(last) < Self.repeatGap {
             let minutes = max(1, Int(Date().timeIntervalSince(last) / 60))
             outcome.note = "סונכרן לפני \(minutes) דק׳, אין צורך לסנכרן שוב."
+            logSkipped(trigger: trigger, note: "דולג: סונכרן לפני \(minutes) דק׳")
             return outcome
         }
         guard auth.isSignedIn else {
             outcome.error = "יש להתחבר קודם ל‑Google."
-            if trigger == .manual { lastError = outcome.error }
+            finish(outcome, trigger: trigger, rangeTitle: "")
             return outcome
         }
         var selected = items.filter(isEnabled)
         guard !selected.isEmpty else {
             outcome.error = "לא נבחר אף סוג נתונים לסנכרון."
-            if trigger == .manual { lastError = outcome.error }
+            finish(outcome, trigger: trigger, rangeTitle: "")
             return outcome
         }
 
@@ -198,9 +214,19 @@ final class SyncCoordinator: ObservableObject {
         progress = 0
         lastError = nil
         needsReconnect = false
-        defer { isSyncing = false }
-
-        let effectiveRange = trigger == .manual ? range : .automatic
+        startedAt = Date()
+        UserDefaults.standard.set(startedAt, forKey: Self.inProgressKey)
+        UserDefaults.standard.set(trigger.rawValue, forKey: Self.inProgressKey + ".trigger")
+        // Ask iOS for time to finish if the user leaves the app mid-sync; without this the
+        // app is suspended within seconds and the sync never completes or gets logged.
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "HealthBridge sync") { [weak self] in
+            Task { @MainActor in self?.endBackgroundTask() }
+        }
+        defer {
+            isSyncing = false
+            startedAt = nil
+            endBackgroundTask()
+        }
 
         // Asking for Apple Health permission shows a sheet, which iOS doesn't allow while the
         // app runs in the background (Shortcuts, background refresh). Only ask in the
@@ -216,14 +242,14 @@ final class SyncCoordinator: ObservableObject {
             selected = allowed
             guard !selected.isEmpty else {
                 outcome.error = "אין הרשאת כתיבה ל‑Apple Health. פתח את האפליקציה ואשר הרשאות."
-                finish(outcome, trigger: trigger, rangeTitle: effectiveRange.title)
+                finish(outcome, trigger: trigger, rangeTitle: title)
                 return outcome
             }
         }
 
-        // Slow-changing types are fetched only when due. A manual sync with a chosen range
-        // always fetches everything; a manual sync on the automatic range waits at most an hour.
-        if effectiveRange == .automatic {
+        // Slow-changing types are fetched only when due (a manual sync waits at most an hour).
+        // A history restore fetches everything.
+        if restoreFrom == nil {
             let now = Date()
             let due = selected.filter { item in
                 guard item.refreshInterval > 0, let last = lastSyncPerItem[item.id] else { return true }
@@ -242,39 +268,31 @@ final class SyncCoordinator: ObservableObject {
         } catch {
             if let authError = error as? AuthError, case .http = authError { needsReconnect = true }
             outcome.error = "לא ניתן להתחבר ל‑Google: \(error.localizedDescription)"
-            finish(outcome, trigger: trigger, rangeTitle: effectiveRange.title)
+            finish(outcome, trigger: trigger, rangeTitle: title)
             return outcome
         }
 
         let now = Date()
-        let windows = Dictionary(uniqueKeysWithValues: selected.map { ($0.id, windowStart(for: $0, now: now, range: effectiveRange)) })
+        let windows = Dictionary(uniqueKeysWithValues: selected.map { ($0.id, restoreFrom ?? windowStart(for: $0, now: now)) })
         let client = healthClient
         let total = Double(selected.count * 2) // fetch + write per item
 
-        // Fetch from Google in parallel.
         var fetched: [String: Result<[HKSample], Error>] = [:]
-        await withTaskGroup(of: (String, Result<[HKSample], Error>).self) { group in
-            for item in selected {
-                let since = windows[item.id]!
-                group.addTask {
-                    do {
-                        return (item.id, .success(try await item.fetch(client, since, now)))
-                    } catch {
-                        return (item.id, .failure(error))
-                    }
-                }
-            }
-            for await (id, result) in group {
-                fetched[id] = result
-                progress += 1 / total
-            }
-        }
-
-        // Write to Apple Health.
         // Keep today's values from types skipped this time.
         var todaySummary = lastSyncDate.map { Calendar.current.isDate($0, inSameDayAs: now) } == true
             ? (today ?? TodaySummary()) : TodaySummary()
-        for item in selected {
+
+        func fetch(_ item: SyncItem) async {
+            let since = windows[item.id]!
+            do {
+                fetched[item.id] = .success(try await item.fetch(client, since, now))
+            } catch {
+                fetched[item.id] = .failure(error)
+            }
+        }
+
+        // Write one type to Apple Health.
+        func write(_ item: SyncItem) async {
             do {
                 let samples = try fetched[item.id]!.get()
                 let written = try await healthKitWriter.replace(item.hkType, since: windows[item.id]!, with: samples)
@@ -292,7 +310,38 @@ final class SyncCoordinator: ObservableObject {
                 }
                 outcome.failedTypes.append(item.name)
             }
+            fetched[item.id] = nil
             progress += 1 / total
+        }
+
+        if restoreFrom != nil {
+            // History restore: one type at a time, so years of data never sit in memory at once.
+            for (index, item) in selected.enumerated() {
+                restoreStatus = "\(index + 1) מתוך \(selected.count): \(item.name)"
+                await fetch(item)
+                progress += 1 / total
+                await write(item)
+            }
+            restoreStatus = nil
+        } else {
+            // Daily sync: fetch everything from Google in parallel, then write.
+            await withTaskGroup(of: (String, Result<[HKSample], Error>).self) { group in
+                for item in selected {
+                    let since = windows[item.id]!
+                    group.addTask {
+                        do {
+                            return (item.id, .success(try await item.fetch(client, since, now)))
+                        } catch {
+                            return (item.id, .failure(error))
+                        }
+                    }
+                }
+                for await (id, result) in group {
+                    fetched[id] = result
+                    progress += 1 / total
+                }
+            }
+            for item in selected { await write(item) }
         }
 
         if outcome.syncedTypes > 0 {
@@ -305,8 +354,44 @@ final class SyncCoordinator: ObservableObject {
         } else {
             outcome.error = "הסנכרון נכשל. בדוק חיבור לאינטרנט, או התנתק והתחבר מחדש ל‑Google."
         }
-        finish(outcome, trigger: trigger, rangeTitle: effectiveRange.title)
+        finish(outcome, trigger: trigger, rangeTitle: title)
         return outcome
+    }
+
+    /// Restores history from `start`, then runs a daily sync so the last two days are
+    /// written minute by minute again (long ranges are written hourly).
+    @discardableResult
+    func restoreHistory(from start: Date) async -> SyncOutcome {
+        UIApplication.shared.isIdleTimerDisabled = true
+        defer { UIApplication.shared.isIdleTimerDisabled = false }
+        let outcome = await syncNow(trigger: .manual, restoreFrom: Calendar.current.startOfDay(for: start))
+        if outcome.syncedTypes > 0 { await syncNow(trigger: .manual) }
+        return outcome
+    }
+
+    /// The first day the band recorded steps: looks back a quarter at a time until a whole
+    /// year has none (or 2008, before Fitbit-era data). nil if nothing was found.
+    func earliestDataDate() async -> Date? {
+        let calendar = Calendar.current
+        var end = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date()))!
+        let floor = calendar.date(from: DateComponents(year: 2008, month: 1, day: 1))!
+        var earliest: Date?
+        var emptyDays = 0
+        restoreStatus = "מחפש את היום הראשון עם נתונים…"
+        defer { restoreStatus = nil }
+        while end > floor, emptyDays < 365 {
+            let start = max(floor, calendar.date(byAdding: .day, value: -90, to: end)!)
+            guard let days = try? await healthClient.dailyRollUp(dataType: "steps", valueKey: "steps",
+                                                                 from: start, to: end, chunkDays: 90) else { break }
+            if let first = days.filter({ $0.value > 0 }).map(\.day).min() {
+                earliest = first
+                emptyDays = 0
+            } else {
+                emptyDays += 90
+            }
+            end = start
+        }
+        return earliest
     }
 
     /// Calories burned on one day (Google total calories: resting + active, as the band
@@ -351,10 +436,12 @@ final class SyncCoordinator: ObservableObject {
         if trigger == .manual || trigger == .appOpen {
             lastError = outcome.error
         }
+        UserDefaults.standard.removeObject(forKey: Self.inProgressKey)
         history = SyncHistory.append(SyncLogEntry(
-            date: Date(), trigger: trigger, rangeTitle: rangeTitle,
+            date: startedAt ?? Date(), trigger: trigger, rangeTitle: rangeTitle,
             records: outcome.records, syncedTypes: outcome.syncedTypes, failedTypes: outcome.failedTypes,
-            error: outcome.error, skippedTypes: outcome.skippedTypes))
+            error: outcome.error, skippedTypes: outcome.skippedTypes,
+            duration: startedAt.map { Date().timeIntervalSince($0) }))
 
         // Tell the user about problems in syncs they didn't start by hand.
         guard trigger != .manual, AppSettings.notifyProblems else { return }
@@ -365,6 +452,13 @@ final class SyncCoordinator: ObservableObject {
         } else if let error = outcome.error {
             Notifier.notify(title: "הסנכרון של HealthBridge נכשל", body: error, id: "sync-failed")
         }
+    }
+
+    /// Records a sync request that didn't run, so every tap shows up in the log.
+    private func logSkipped(trigger: SyncTrigger, note: String) {
+        history = SyncHistory.append(SyncLogEntry(
+            date: Date(), trigger: trigger, rangeTitle: "", records: 0, syncedTypes: 0,
+            failedTypes: [], note: note))
     }
 
     private static func addToToday(_ summary: inout TodaySummary, item: SyncItem, samples: [HKSample], now: Date) {

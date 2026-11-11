@@ -143,16 +143,18 @@ enum SyncCatalog {
             }
 
             if hourly {
+                // Minute by minute for a normal sync (as Google records it), hourly for long
+                // manual re-syncs so a 90-day range doesn't write hundreds of thousands of samples.
+                let bucket = SyncCatalog.bucketSeconds(since: since, now: now)
                 var buckets: [Date: Double] = [:]
-                let calendar = Calendar.current
                 for e in entries {
-                    let hour = calendar.dateInterval(of: .hour, for: e.start)!.start
-                    buckets[hour, default: 0] += e.value
+                    let start = Date(timeIntervalSince1970: (e.start.timeIntervalSince1970 / bucket).rounded(.down) * bucket)
+                    buckets[start, default: 0] += e.value
                 }
-                return buckets.map { hour, total in
-                    let end = min(hour.addingTimeInterval(3600), max(now, hour.addingTimeInterval(1)))
+                return buckets.map { start, total in
+                    let end = min(start.addingTimeInterval(bucket), max(now, start.addingTimeInterval(1)))
                     return HKQuantitySample(type: type, quantity: HKQuantity(unit: unit, doubleValue: total),
-                                            start: hour, end: end, metadata: meta)
+                                            start: start, end: end, metadata: meta)
                 }
             }
             return entries.map {
@@ -212,10 +214,10 @@ enum SyncCatalog {
     /// Steps that match Google Health's own daily totals exactly.
     ///
     /// Google's daily total (dailyRollUp, the number the Google Health app shows) is the
-    /// source of truth. Hourly totals (rollUp, 1-hour windows) only spread each day's total
-    /// across the hours so Apple Health gets a useful graph; they are scaled so every day
-    /// adds up to Google's number to the step. If hourly data isn't available, the day is
-    /// written as one sample.
+    /// source of truth. Per-minute totals (rollUp, 1-minute windows; hourly for long ranges)
+    /// only spread each day's total over the day so Apple Health gets the same timeline as
+    /// Google; they are scaled so every day adds up to Google's number to the step. If that
+    /// data isn't available, the day is written as one sample.
     private static var steps: SyncItem {
         let type = HKQuantityType(.stepCount)
         return SyncItem(name: "צעדים", hkType: type) { client, since, now in
@@ -224,14 +226,23 @@ enum SyncCatalog {
 
             let daily = try await client.dailyRollUp(dataType: "steps", valueKey: "steps", from: since, to: endOfToday)
 
+            // Per-minute steps for a normal sync (like Google's own data), hourly for long ranges.
+            // The end is rounded up to a whole window so the current minute/hour is included.
+            var window = SyncCatalog.bucketSeconds(since: since, now: now)
             var hourly: [(start: Date, value: Double)] = []
-            do {
-                hourly = try await client.rollUp(dataType: "steps", valueKey: "steps", from: since, to: now,
-                                                 windowSeconds: 3600, pick: GoogleHealthJSON.sumNumber)
-            } catch let error as GoogleHealthError where error.isPermissionDenied {
-                throw error
-            } catch {
-                hourly = [] // fall back to one sample per day
+            while true {
+                let rollEnd = Date(timeIntervalSince1970: (now.timeIntervalSince1970 / window).rounded(.up) * window)
+                do {
+                    hourly = try await client.rollUp(dataType: "steps", valueKey: "steps", from: since, to: rollEnd,
+                                                     windowSeconds: Int(window), pick: GoogleHealthJSON.sumNumber)
+                    break
+                } catch let error as GoogleHealthError where error.isPermissionDenied {
+                    throw error
+                } catch {
+                    // Minute windows refused: try hourly; if that fails too, one sample per day.
+                    guard window < 3600 else { hourly = []; break }
+                    window = 3600
+                }
             }
 
             var samples: [HKSample] = []
@@ -246,13 +257,19 @@ enum SyncCatalog {
                     continue
                 }
                 for (hour, count) in zip(hours, counts) where count > 0 {
-                    let end = min(hour.start.addingTimeInterval(3600), max(now, hour.start.addingTimeInterval(1)))
+                    let end = min(hour.start.addingTimeInterval(window), max(now, hour.start.addingTimeInterval(1)))
                     samples.append(HKQuantitySample(type: type, quantity: HKQuantity(unit: .count(), doubleValue: Double(count)),
                                                     start: hour.start, end: end, metadata: meta))
                 }
             }
             return samples
         }
+    }
+
+    /// Sample length for activity data: 1 minute for syncs of up to 3 days (the normal
+    /// automatic window), 1 hour for longer manual re-syncs.
+    static func bucketSeconds(since: Date, now: Date) -> TimeInterval {
+        now.timeIntervalSince(since) <= 3 * 86400 ? 60 : 3600
     }
 
     /// Splits `total` into integers proportional to `weights` that add up to exactly
@@ -338,8 +355,9 @@ enum SyncCatalog {
     private static var heartRate: SyncItem {
         let type = HKQuantityType(.heartRate)
         let bpm = HKUnit.count().unitDivided(by: .minute())
-        let window: TimeInterval = 300
         return SyncItem(name: "דופק", hkType: type) { client, since, now in
+            // 5-minute averages normally; hourly for history restores longer than a month.
+            let window: TimeInterval = now.timeIntervalSince(since) > 31 * 86400 ? 3600 : 300
             var averages: [(start: Date, value: Double)] = []
             do {
                 averages = try await client.rollUp(dataType: "heart-rate", valueKey: "heartRate",
