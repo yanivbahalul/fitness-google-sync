@@ -57,6 +57,12 @@ struct FoodDraft: Identifiable, Equatable {
     var carbsPer100: Double
     var fatPer100: Double
     var include = true
+    /// Other database foods that could fit (shown when the user changes the match).
+    var alternatives: [FoodItem] = []
+    /// How the amount was judged, e.g. "כ‑1 כוס" (from the photo/text analysis).
+    var portionNote: String?
+    /// The analysis wasn't sure about this item; worth checking before saving.
+    var lowConfidence = false
 
     var kcal: Double { (food?.kcal ?? kcalPer100) * grams / 100 }
     var protein: Double { (food?.protein ?? proteinPer100) * grams / 100 }
@@ -128,6 +134,24 @@ final class FoodLog: ObservableObject {
     func addQuick(kcal: Double, name: String = "הזנה מהירה", at date: Date = Date()) async {
         await add([FoodEntry(date: date, name: name, grams: nil, kcal: kcal,
                              protein: 0, carbs: 0, fat: 0, source: .quick)])
+    }
+
+    /// Logs a food again (same amount and values) on `date`.
+    func relog(_ entry: FoodEntry, at date: Date) async {
+        await add([FoodEntry(date: date, name: entry.name, grams: entry.grams, kcal: entry.kcal,
+                             protein: entry.protein, carbs: entry.carbs, fat: entry.fat, source: entry.source)])
+    }
+
+    /// The most recently eaten different foods (newest first), for one-tap re-logging.
+    func recentFoods(limit: Int = 10) -> [FoodEntry] {
+        var seen = Set<String>()
+        var result: [FoodEntry] = []
+        for entry in entries.sorted(by: { $0.date > $1.date }) where entry.source != .quick && entry.source != .cali {
+            guard seen.insert(entry.name).inserted else { continue }
+            result.append(entry)
+            if result.count == limit { break }
+        }
+        return result
     }
 
     /// Adds imported entries, skipping ones already imported. Returns how many were new.

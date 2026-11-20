@@ -90,6 +90,8 @@ enum MealAnalyzer {
         let protein_per_100g: Double
         let carbs_per_100g: Double
         let fat_per_100g: Double
+        let portion_note: String
+        let confidence: String
     }
 
     private struct Result: Decodable {
@@ -101,7 +103,11 @@ enum MealAnalyzer {
     - name_he: שם קצר בעברית כפי שמקובל בישראל (למשל "שניצל עוף", "אורז לבן מבושל", "סלט ירקות").
     - search_terms: 1–3 מילות חיפוש בעברית למאגר מזון ישראלי, מהכללית לספציפית (למשל ["שניצל", "חזה עוף מטוגן"]).
     - grams: הכמות שנאכלה בגרמים (משקאות במ"ל ≈ גרם). אם בתיאור כתובה כמות ("2 פרוסות", "כוס"), המר לגרמים.
-    - ערכים ל‑100 גרם (kcal, protein, carbs, fat): הערכה שלך, לשימוש רק אם המאכל לא יימצא במאגר.
+    - ערכים ל‑100 גרם (kcal, protein, carbs, fat): הערכה שלך למאכל במצב שבו הוא נאכל (מבושל/מטוגן/אפוי), לשימוש רק אם המאכל לא יימצא במאגר.
+    - portion_note: איך הערכת את הכמות, במילים פשוטות (למשל "כ‑1 כוס", "2 פרוסות בינוניות", "חצי צלחת").
+    - confidence: "high" אם ברור מה זה וכמה, "medium" אם הכמות משוערת, "low" אם לא בטוח מה המאכל או שהוא מוסתר.
+    כדי להעריך גודל השתמש בעצמים מוכרים בתמונה: צלחת רגילה כ‑26 ס"מ, מזלג כ‑19 ס"מ, כף כ‑15 מ"ל, כוס כ‑240 מ"ל, כף יד.
+    העדף מנות ישראליות טיפוסיות כשאין רמז אחר. שמן, רטבים וממרחים שרואים בתמונה הם פריט נפרד.
     פרק מנה מורכבת לרכיביה העיקריים (למשל פיתה + פלאפל + חומוס). אל תכלול כלים, מפות או אריזות. אם אין אוכל, החזר רשימה ריקה.
     """
 
@@ -120,9 +126,12 @@ enum MealAnalyzer {
                         "protein_per_100g": ["type": "number"],
                         "carbs_per_100g": ["type": "number"],
                         "fat_per_100g": ["type": "number"],
+                        "portion_note": ["type": "string"],
+                        "confidence": ["type": "string", "enum": ["high", "medium", "low"]],
                     ],
                     "required": ["name_he", "search_terms", "grams", "kcal_per_100g",
-                                 "protein_per_100g", "carbs_per_100g", "fat_per_100g"],
+                                 "protein_per_100g", "carbs_per_100g", "fat_per_100g",
+                                 "portion_note", "confidence"],
                     "additionalProperties": false,
                 ],
             ],
@@ -137,7 +146,7 @@ enum MealAnalyzer {
         let model = MealModel.current
 
         var content: [[String: Any]] = []
-        if let image, let jpeg = resized(image, maxSide: 1280).jpegData(compressionQuality: 0.8) {
+        if let image, let jpeg = resized(image, maxSide: 1568).jpegData(compressionQuality: 0.8) {
             content.append([
                 "type": "image",
                 "source": ["type": "base64", "media_type": "image/jpeg", "data": jpeg.base64EncodedString()],
@@ -152,9 +161,10 @@ enum MealAnalyzer {
         var body: [String: Any] = [
             "model": model.rawValue,
             "max_tokens": 16000,
-            // Low effort: a quick, focused answer (thinking stays on; it can't be disabled on these models).
+            // Photos need a closer look (sizes, hidden items); a text description is quick.
+            // Thinking stays on either way (it can't be disabled on these models).
             "output_config": [
-                "effort": "low",
+                "effort": image == nil ? "low" : "medium",
                 "format": ["type": "json_schema", "schema": schema],
             ],
             "messages": [["role": "user", "content": content]],
@@ -189,16 +199,39 @@ enum MealAnalyzer {
             throw MealAnalyzerError.badResponse(json["stop_reason"] as? String ?? "ללא טקסט")
         }
 
-        let db = FoodDatabase.shared
         return result.items.map { item in
-            // Try the model's search terms from most specific to most general, then the name.
-            var match: FoodItem?
-            for term in item.search_terms.reversed() + [item.name_he] {
-                if let found = db.search(term, limit: 1).first { match = found; break }
-            }
-            return FoodDraft(label: item.name_he, food: match, grams: max(1, item.grams.rounded()),
+            let candidates = candidates(for: item)
+            return FoodDraft(label: item.name_he, food: bestMatch(in: candidates, estimate: item.kcal_per_100g),
+                             grams: max(1, item.grams.rounded()),
                              kcalPer100: item.kcal_per_100g, proteinPer100: item.protein_per_100g,
-                             carbsPer100: item.carbs_per_100g, fatPer100: item.fat_per_100g)
+                             carbsPer100: item.carbs_per_100g, fatPer100: item.fat_per_100g,
+                             alternatives: candidates,
+                             portionNote: item.portion_note.isEmpty ? nil : item.portion_note,
+                             lowConfidence: item.confidence == "low")
+        }
+    }
+
+    /// Database foods that could fit: the top results for each of the model's search terms
+    /// (most specific first) and its name, without duplicates.
+    private static func candidates(for item: Item) -> [FoodItem] {
+        var seen = Set<Int>()
+        var result: [FoodItem] = []
+        for term in item.search_terms.reversed() + [item.name_he] {
+            for food in FoodDatabase.shared.search(term, limit: 5) where seen.insert(food.code).inserted {
+                result.append(food)
+            }
+        }
+        return Array(result.prefix(12))
+    }
+
+    /// The first candidate whose calories are close to the model's own estimate for the
+    /// food as eaten. A name match alone can be the wrong form (raw rice vs cooked, dry
+    /// pasta vs boiled), which would be far off; then the estimate is used instead and the
+    /// candidates stay available to pick by hand.
+    private static func bestMatch(in candidates: [FoodItem], estimate: Double) -> FoodItem? {
+        guard estimate > 0 else { return candidates.first }
+        return candidates.first { food in
+            abs(food.kcal - estimate) <= 40 || (0.65...1.5).contains(food.kcal / estimate)
         }
     }
 
