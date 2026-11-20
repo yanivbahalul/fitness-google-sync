@@ -72,6 +72,7 @@ enum MealAnalyzerError: LocalizedError {
         case .http(401, _): return "מפתח ה‑API לא תקין. בדוק אותו בהגדרות."
         case .http(402, _), .http(403, _): return "אין קרדיט בחשבון Anthropic, או שהמפתח חסום. בדוק ב‑console.anthropic.com."
         case .http(429, _): return "יותר מדי בקשות. נסה שוב בעוד רגע."
+        case .http(500..<600, _), .http(-1, _): return "Claude עמוס כרגע ולא ענה גם אחרי כמה ניסיונות. נסה שוב בעוד דקה."
         case .http(let code, let body): return "שגיאה \(code) מ‑Claude: \(body.prefix(200))"
         }
     }
@@ -171,11 +172,7 @@ enum MealAnalyzer {
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let code = (response as? HTTPURLResponse)?.statusCode ?? -1
-        guard (200...299).contains(code) else {
-            throw MealAnalyzerError.http(code, String(data: data, encoding: .utf8) ?? "")
-        }
+        let data = try await send(request)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw MealAnalyzerError.badResponse("לא JSON")
         }
@@ -186,6 +183,9 @@ enum MealAnalyzer {
               let resultData = text.data(using: .utf8),
               let result = try? JSONDecoder().decode(Result.self, from: resultData)
         else {
+            if json["stop_reason"] as? String == "max_tokens" {
+                throw MealAnalyzerError.badResponse("התשובה נקטעה. נסה צילום עם פחות מאכלים.")
+            }
             throw MealAnalyzerError.badResponse(json["stop_reason"] as? String ?? "ללא טקסט")
         }
 
@@ -199,6 +199,35 @@ enum MealAnalyzer {
             return FoodDraft(label: item.name_he, food: match, grams: max(1, item.grams.rounded()),
                              kcalPer100: item.kcal_per_100g, proteinPer100: item.protein_per_100g,
                              carbsPer100: item.carbs_per_100g, fatPer100: item.fat_per_100g)
+        }
+    }
+
+    /// Sends the request, retrying temporary failures (rate limit, overloaded, server error,
+    /// dropped connection) up to 3 times with growing waits, honoring `retry-after` and
+    /// `x-should-retry`. Most "it didn't work" cases were a single 529/500 or a network blip.
+    private static func send(_ request: URLRequest) async throws -> Data {
+        var attempt = 0
+        while true {
+            attempt += 1
+            let data: Data
+            let response: URLResponse
+            do {
+                (data, response) = try await URLSession.shared.data(for: request)
+            } catch let error as URLError where attempt < 3 && error.code != .cancelled {
+                try await Task.sleep(nanoseconds: UInt64(attempt) * 2_000_000_000)
+                continue
+            }
+            let http = response as? HTTPURLResponse
+            let code = http?.statusCode ?? -1
+            if (200...299).contains(code) { return data }
+
+            let retryable = code == 408 || code == 409 || code == 429 || code >= 500
+            let serverSaysNo = http?.value(forHTTPHeaderField: "x-should-retry") == "false"
+            guard retryable, !serverSaysNo, attempt < 3 else {
+                throw MealAnalyzerError.http(code, String(data: data, encoding: .utf8) ?? "")
+            }
+            let wait = http?.value(forHTTPHeaderField: "retry-after").flatMap(Double.init) ?? Double(attempt * 2)
+            try await Task.sleep(nanoseconds: UInt64(min(wait, 20) * 1_000_000_000))
         }
     }
 

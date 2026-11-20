@@ -189,9 +189,14 @@ struct PhotoAnalyzeView: View {
                 CameraPicker { image = $0 }.ignoresSafeArea()
             }
             .onChange(of: pickerItem) { item in
+                guard let item else { return }
                 Task {
-                    if let data = try? await item?.loadTransferable(type: Data.self), let ui = UIImage(data: data) {
+                    error = nil
+                    // Photos kept only in iCloud are downloaded first; that can fail or be slow.
+                    if let data = try? await item.loadTransferable(type: Data.self), let ui = UIImage(data: data) {
                         image = ui
+                    } else {
+                        error = "התמונה לא נטענה (ייתכן שהיא שמורה רק ב‑iCloud). נסה שוב או צלם."
                     }
                 }
             }
