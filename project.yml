@@ -16,9 +16,6 @@ targets:
       - path: Sources
         excludes:
           - Config/Secrets.example.plist
-    resources:
-      - path: Sources/Config/Secrets.plist
-        optional: true
     info:
       path: Sources/App/Info.plist
       properties:

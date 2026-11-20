@@ -4,118 +4,287 @@ import VisionKit
 
 // MARK: - Review before saving
 
-/// Shows what was recognized (photo / text / barcode), lets the user fix matches and
-/// amounts, then saves to the diary and Apple Health.
+/// Shows what was recognized (photo / text / barcode / search), lets the user fix matches
+/// and amounts, add or remove foods, then saves to the diary and Apple Health.
 struct DraftReviewView: View {
     @Binding var drafts: [FoodDraft]
     let source: FoodEntry.Source
     let day: Date
+    var image: UIImage? = nil
     let onSaved: () -> Void
     @State private var saving = false
+    @State private var addingFood = false
+    @FocusState private var focused: UUID?
+
+    private var included: [FoodDraft] { drafts.filter(\.include) }
 
     var body: some View {
         List {
-            Section {
-                ForEach($drafts) { $draft in
-                    DraftRow(draft: $draft)
+            if let image {
+                Section {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(maxWidth: .infinity, maxHeight: 180)
+                        .clipShape(RoundedRectangle(cornerRadius: DS.tileRadius, style: .continuous))
+                        .listRowInsets(EdgeInsets())
+                        .accessibilityLabel("תמונת הארוחה")
                 }
             }
             Section {
-                let total = drafts.filter(\.include).map(\.kcal).reduce(0, +)
-                HStack {
-                    Text("סה\"כ").font(.headline)
-                    Spacer()
-                    Text("\(Int(safe: total).formatted()) קק\"ל").font(.headline).monospacedDigit()
+                // Removed foods are only hidden (include = false), which keeps the row bindings valid.
+                ForEach($drafts) { $draft in
+                    if draft.include {
+                        DraftRow(draft: $draft, focused: $focused) { draft.include = false }
+                    }
                 }
                 Button {
-                    saving = true
-                    Task {
-                        await FoodLog.shared.add(drafts, source: source, at: FoodLog.entryDate(for: day))
-                        saving = false
-                        onSaved()
-                    }
+                    addingFood = true
                 } label: {
-                    HStack {
-                        if saving { ProgressView() }
-                        Text("שמור ביומן").bold()
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                    Label("הוסף מאכל", systemImage: "plus.circle.fill")
+                        .frame(minHeight: DS.minTap)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(saving || !drafts.contains(where: \.include))
+            } header: {
+                Text("בדוק את הכמויות לפני השמירה")
             }
         }
+        .scrollDismissesKeyboard(.interactively)
+        .safeAreaInset(edge: .bottom) { saveBar }
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("סיום") { focused = nil }
+            }
+        }
+        .sheet(isPresented: $addingFood) {
+            FoodPickerSheet { item in
+                drafts.append(FoodDraft(label: item.name, food: item, grams: item.defaultGrams,
+                                        kcalPer100: item.kcal, proteinPer100: item.protein,
+                                        carbsPer100: item.carbs, fatPer100: item.fat))
+            }
+        }
+    }
+
+    /// Total and the save button, always visible at the bottom.
+    private var saveBar: some View {
+        let kcal = included.map(\.kcal).reduce(0, +)
+        let protein = included.map(\.protein).reduce(0, +)
+        let carbs = included.map(\.carbs).reduce(0, +)
+        let fat = included.map(\.fat).reduce(0, +)
+        return VStack(spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(Int(safe: kcal).formatted()) קק\"ל")
+                        .font(.title3.bold())
+                        .monospacedDigit()
+                    Text("חלבון \(Int(safe: protein)) · פחמימות \(Int(safe: carbs)) · שומן \(Int(safe: fat)) ג׳")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+                Spacer()
+            }
+            PrimaryButton(title: "שמור ביומן", symbol: "checkmark", busy: saving) {
+                saving = true
+                Task {
+                    await FoodLog.shared.add(drafts, source: source, at: FoodLog.entryDate(for: day))
+                    saving = false
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    onSaved()
+                }
+            }
+            .disabled(saving || included.isEmpty)
+        }
+        .padding(.horizontal, DS.pagePadding)
+        .padding(.vertical, 12)
+        .background(.bar)
     }
 }
 
 private struct DraftRow: View {
     @Binding var draft: FoodDraft
+    var focused: FocusState<UUID?>.Binding
+    let onDelete: () -> Void
     @State private var gramsText = ""
+    @State private var searching = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top) {
-                Toggle(isOn: $draft.include) { EmptyView() }
-                    .labelsHidden()
-                    .accessibilityLabel("כלול את \(draft.displayName)")
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(draft.label).font(.body.weight(.semibold))
-                    Menu {
-                        ForEach(FoodDatabase.shared.search(draft.label, limit: 12)) { item in
-                            Button("\(item.name) · \(Int(safe: item.kcal)) ל‑100 ג׳") { draft.food = item }
-                        }
-                        Button("בלי התאמה (הערכה)") { draft.food = nil }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text(draft.food?.name ?? "ללא התאמה במאגר: הערכה")
-                                .font(.caption)
-                                .multilineTextAlignment(.leading)
-                                .lineLimit(2)
-                            Image(systemName: "chevron.down").font(.caption2)
-                        }
-                    }
-                    .accessibilityLabel("התאמה במאגר: \(draft.food?.name ?? "ללא")")
-                }
-                Spacer()
-                Text("\(Int(safe: draft.kcal))")
-                    .font(.headline)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(draft.label)
+                    .font(.body.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Text("\(Int(safe: draft.kcal)) קק\"ל")
+                    .font(.body.weight(.semibold))
                     .monospacedDigit()
             }
-            HStack(spacing: 8) {
-                Text("כמות")
+
+            matchMenu
+
+            if draft.lowConfidence {
+                Label("לא בטוח מה זה. כדאי לבדוק.", systemImage: "questionmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            } else if let note = draft.portionNote {
+                Text("הוערך: \(note)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 8) {
+                stepButton("minus", label: "הפחת 10 גרם") { setGrams(max(1, draft.grams - 10)) }
                 TextField("גרם", text: $gramsText)
                     .keyboardType(.decimalPad)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 80)
+                    .multilineTextAlignment(.center)
+                    .font(.body.monospacedDigit())
+                    .frame(minWidth: 64, maxWidth: 90, minHeight: DS.minTap)
+                    .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .focused(focused, equals: draft.id)
+                    .accessibilityLabel("כמות בגרם")
                     .onChange(of: gramsText) { value in
                         if let g = Double(value.replacingOccurrences(of: ",", with: ".")), g > 0 { draft.grams = g }
                     }
-                Text("ג׳").font(.caption)
+                Text("ג׳").foregroundStyle(.secondary)
+                stepButton("plus", label: "הוסף 10 גרם") { setGrams(draft.grams + 10) }
+                Spacer(minLength: 4)
                 if let portions = draft.food?.portions, !portions.isEmpty {
                     Menu {
                         ForEach(portions, id: \.self) { p in
-                            Button("\(p.name) (\(Int(safe: p.grams)) ג׳)") {
-                                draft.grams = p.grams
-                                gramsText = String(Int(safe: p.grams))
-                            }
+                            Button("\(p.name) (\(Int(safe: p.grams)) ג׳)") { setGrams(p.grams) }
                         }
                     } label: {
-                        Label("מנה", systemImage: "square.stack.3d.down.right")
-                            .font(.caption)
+                        Text("מנות").font(.subheadline.weight(.semibold)).frame(minHeight: DS.minTap)
                     }
+                    .accessibilityLabel("בחר מנה מוכנה")
                 }
+                Button(role: .destructive, action: onDelete) {
+                    Image(systemName: "trash").frame(width: DS.minTap, height: DS.minTap)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("הסר את \(draft.label)")
             }
         }
-        .padding(.vertical, 4)
-        .opacity(draft.include ? 1 : 0.5)
+        .padding(.vertical, 6)
         .onAppear { gramsText = String(Int(safe: draft.grams)) }
+        .sheet(isPresented: $searching) {
+            FoodPickerSheet(initialQuery: draft.label) { draft.food = $0 }
+        }
+    }
+
+    /// Which database food the calories come from; tap to change.
+    private var matchMenu: some View {
+        Menu {
+            let options = draft.alternatives.isEmpty ? FoodDatabase.shared.search(draft.label, limit: 10) : draft.alternatives
+            ForEach(options) { item in
+                Button("\(item.name) · \(Int(safe: item.kcal)) ל‑100 ג׳") { draft.food = item }
+            }
+            Divider()
+            Button { searching = true } label: { Label("חיפוש במאגר…", systemImage: "magnifyingglass") }
+            Button { draft.food = nil } label: { Label("הערכה, בלי מאגר", systemImage: "sparkles") }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: draft.food == nil ? "sparkles" : "checkmark.seal.fill")
+                    .foregroundStyle(draft.food == nil ? Color.secondary : Theme.accent)
+                Text(draft.food.map { "מאגר צמרת: \($0.name)" } ?? "הערכה (לא נמצא במאגר)")
+                    .font(.subheadline)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(2)
+                Image(systemName: "chevron.down").font(.caption)
+            }
+            .frame(minHeight: DS.minTap, alignment: .leading)
+        }
+        .accessibilityLabel("מקור הערכים: \(draft.food?.name ?? "הערכה")")
+        .accessibilityHint("הקש כדי לבחור מאכל אחר מהמאגר")
+    }
+
+    private func stepButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.body.weight(.semibold))
+                .frame(width: DS.minTap, height: DS.minTap)
+                .background(Color(.tertiarySystemFill), in: Circle())
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel(label)
+    }
+
+    private func setGrams(_ grams: Double) {
+        draft.grams = grams.rounded()
+        gramsText = String(Int(safe: draft.grams))
+    }
+}
+
+extension FoodItem {
+    /// A sensible starting amount: a medium household portion if there is one, else 100 g.
+    var defaultGrams: Double {
+        portions.first(where: { $0.name.contains("בינונ") })?.grams ?? portions.first?.grams ?? 100
+    }
+}
+
+/// Search the Tzameret database and pick one food.
+struct FoodPickerSheet: View {
+    var initialQuery = ""
+    let onPick: (FoodItem) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+    @State private var results: [FoodItem] = []
+
+    var body: some View {
+        NavigationStack {
+            List(results) { item in
+                Button {
+                    onPick(item)
+                    dismiss()
+                } label: {
+                    FoodResultRow(item: item)
+                }
+            }
+            .overlay {
+                if results.isEmpty {
+                    Text(query.isEmpty ? "חפש מאכל בעברית" : "לא נמצאו תוצאות")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "חיפוש במאגר צמרת")
+            .onChange(of: query) { search($0) }
+            .onAppear {
+                if query.isEmpty, !initialQuery.isEmpty { query = initialQuery; search(initialQuery) }
+            }
+            .navigationTitle("בחר מאכל")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("ביטול") { dismiss() } } }
+        }
+        .appChrome()
+    }
+
+    private func search(_ q: String) {
+        let current = q
+        Task.detached(priority: .userInitiated) {
+            let found = FoodDatabase.shared.search(current)
+            await MainActor.run { if current == query { results = found } }
+        }
+    }
+}
+
+/// One database food in a search list.
+struct FoodResultRow: View {
+    let item: FoodItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(item.name).foregroundStyle(.primary)
+            Text("\(Int(safe: item.kcal)) קק\"ל ל‑100 ג׳ · חלבון \(String(format: "%.1f", item.protein)) ג׳")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(minHeight: DS.minTap, alignment: .leading)
     }
 }
 
 // MARK: - Photo
 
+/// Take or pick a photo; analysis starts by itself as soon as there is one.
 struct PhotoAnalyzeView: View {
     let day: Date
     @Environment(\.dismiss) private var dismiss
@@ -126,72 +295,68 @@ struct PhotoAnalyzeView: View {
     @State private var drafts: [FoodDraft] = []
     @State private var analyzing = false
     @State private var error: String?
-    @State private var started: Date?
 
     var body: some View {
         NavigationStack {
             Group {
                 if !drafts.isEmpty {
-                    DraftReviewView(drafts: $drafts, source: .photo, day: day) { dismiss() }
+                    DraftReviewView(drafts: $drafts, source: .photo, day: day, image: image) { dismiss() }
                 } else {
                     ScrollView {
                         VStack(spacing: 16) {
-                            if let image {
-                                Image(uiImage: image)
-                                    .resizable()
-                                    .scaledToFit()
-                                    .frame(maxHeight: 280)
-                                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                                    .accessibilityLabel("תמונת הארוחה")
-                            } else {
-                                Image(systemName: "camera.metering.matrix")
-                                    .font(.system(size: 56))
-                                    .foregroundStyle(.secondary)
-                                    .padding(.top, 24)
-                            }
-                            HStack {
-                                if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                                    Button { showCamera = true } label: {
-                                        Label("צלם", systemImage: "camera.fill").frame(maxWidth: .infinity, minHeight: 44)
-                                    }
-                                    .buttonStyle(.borderedProminent)
+                            preview
+                            TextField("הערה, לא חובה (למשל \"אכלתי חצי\")", text: $note, axis: .vertical)
+                                .padding(12)
+                                .background(Color(.secondarySystemGroupedBackground),
+                                            in: RoundedRectangle(cornerRadius: DS.tileRadius, style: .continuous))
+                            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                                PrimaryButton(title: image == nil ? "צלם את הארוחה" : "צלם שוב", symbol: "camera.fill") {
+                                    showCamera = true
                                 }
-                                PhotosPicker(selection: $pickerItem, matching: .images) {
-                                    Label("מהגלריה", systemImage: "photo.on.rectangle").frame(maxWidth: .infinity, minHeight: 44)
-                                }
-                                .buttonStyle(.bordered)
-                            }
-                            TextField("הערה (לא חובה), למשל \"חצי מנה\"", text: $note)
-                                .textFieldStyle(.roundedBorder)
-                            if image != nil {
-                                Button {
-                                    Task { await analyze() }
-                                } label: {
-                                    HStack {
-                                        if analyzing { ProgressView().tint(.white) }
-                                        Text(analyzing ? "מנתח את הארוחה…" : "נתח ארוחה").bold()
-                                    }
-                                    .frame(maxWidth: .infinity, minHeight: 48)
-                                }
-                                .buttonStyle(.borderedProminent)
                                 .disabled(analyzing)
                             }
-                            if let error { Notice(symbol: "exclamationmark.triangle.fill", color: .red, text: error) }
+                            PhotosPicker(selection: $pickerItem, matching: .images) {
+                                Label("בחר מהגלריה", systemImage: "photo.on.rectangle")
+                                    .font(.body.weight(.semibold))
+                                    .frame(maxWidth: .infinity, minHeight: 50)
+                            }
+                            .buttonStyle(.bordered)
+                            .buttonBorderShape(.roundedRectangle(radius: 14))
+                            .disabled(analyzing)
+                            if let error {
+                                Notice(symbol: "exclamationmark.triangle.fill", color: .red, text: error)
+                                if image != nil {
+                                    Button("נסה שוב") { Task { await analyze() } }
+                                        .font(.body.weight(.semibold))
+                                        .frame(minHeight: DS.minTap)
+                                }
+                            }
                         }
-                        .padding(16)
+                        .padding(DS.pagePadding)
                     }
+                    .pageBackground()
                 }
             }
             .navigationTitle("ארוחה מצילום")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("ביטול") { dismiss() } } }
-            .sheet(isPresented: $showCamera) {
-                CameraPicker { image = $0 }.ignoresSafeArea()
+            .fullScreenCover(isPresented: $showCamera) {
+                CameraPicker { picked in
+                    image = picked
+                    Task { await analyze() }
+                }
+                .ignoresSafeArea()
             }
             .onChange(of: pickerItem) { item in
+                guard let item else { return }
                 Task {
-                    if let data = try? await item?.loadTransferable(type: Data.self), let ui = UIImage(data: data) {
+                    error = nil
+                    // Photos kept only in iCloud are downloaded first; that can fail or be slow.
+                    if let data = try? await item.loadTransferable(type: Data.self), let ui = UIImage(data: data) {
                         image = ui
+                        await analyze()
+                    } else {
+                        error = "התמונה לא נטענה (ייתכן שהיא שמורה רק ב‑iCloud). נסה שוב או צלם."
                     }
                 }
             }
@@ -199,7 +364,43 @@ struct PhotoAnalyzeView: View {
         .appChrome()
     }
 
+    /// The photo with an "analyzing" overlay, or a hint when there is none yet.
+    @ViewBuilder private var preview: some View {
+        if let image {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(maxHeight: 320)
+                .clipShape(RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous))
+                .overlay {
+                    if analyzing {
+                        VStack(spacing: 10) {
+                            ProgressView().controlSize(.large)
+                            Text("מזהה את המאכלים…").font(.headline)
+                        }
+                        .padding(20)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous))
+                    }
+                }
+                .accessibilityLabel(analyzing ? "מזהה את המאכלים בתמונה" : "תמונת הארוחה")
+        } else {
+            VStack(spacing: 10) {
+                Image(systemName: "fork.knife.circle")
+                    .font(.system(size: 56))
+                    .foregroundStyle(Theme.accent)
+                Text("צלם את הצלחת מלמעלה, באור טוב, כשהכל בתוך התמונה.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 24)
+            .accessibilityElement(children: .combine)
+        }
+    }
+
     private func analyze() async {
+        guard image != nil, !analyzing else { return }
         analyzing = true
         error = nil
         defer { analyzing = false }
@@ -320,18 +521,11 @@ struct FoodSearchView: View {
                 } else {
                     List(results) { item in
                         Button {
-                            let grams = item.portions.first(where: { $0.name.contains("בינונית") })?.grams
-                                ?? item.portions.first?.grams ?? 100
-                            drafts = [FoodDraft(label: item.name, food: item, grams: grams,
+                            drafts = [FoodDraft(label: item.name, food: item, grams: item.defaultGrams,
                                                 kcalPer100: item.kcal, proteinPer100: item.protein,
                                                 carbsPer100: item.carbs, fatPer100: item.fat)]
                         } label: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(item.name).foregroundStyle(.primary)
-                                Text("\(Int(safe: item.kcal)) קק\"ל ל‑100 ג׳ · חלבון \(String(format: "%.1f", item.protein)) ג׳")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
+                            FoodResultRow(item: item)
                         }
                     }
                     .overlay {

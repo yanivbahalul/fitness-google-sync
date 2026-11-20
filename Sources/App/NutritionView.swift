@@ -104,22 +104,69 @@ private enum AddMode: String, Identifiable {
     var id: String { rawValue }
 }
 
+/// Logging first: one big photo button (the fastest way, as in the leading calorie apps),
+/// the other ways in one row, and recently eaten foods to log again with one tap.
 private struct AddFoodCard: View {
     let day: Date
+    @ObservedObject private var food = FoodLog.shared
     @State private var mode: AddMode?
     @State private var quickAdd = false
     @State private var quickText = ""
+    @State private var justAdded: String?
 
     var body: some View {
         Card {
-            CardHeader(title: Calendar.current.isDateInToday(day) ? "הוסף אוכל" : "הוסף אוכל ל‑\(day.formatted(.dateTime.day().month().locale(.he)))",
-                       symbol: "plus")
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                AddButton(title: "צילום", symbol: "camera.fill") { mode = .photo }
-                AddButton(title: "תיאור", symbol: "text.bubble.fill") { mode = .text }
+            PrimaryButton(title: Calendar.current.isDateInToday(day) ? "צלם ארוחה" : "צלם ארוחה ל‑\(day.formatted(.dateTime.day().month().locale(.he)))",
+                          symbol: "camera.fill") { mode = .photo }
+
+            HStack(spacing: 8) {
                 AddButton(title: "חיפוש", symbol: "magnifyingglass") { mode = .search }
                 AddButton(title: "ברקוד", symbol: "barcode.viewfinder") { mode = .barcode }
-                AddButton(title: "מהיר", symbol: "bolt.fill") { quickText = ""; quickAdd = true }
+                AddButton(title: "תיאור", symbol: "text.bubble.fill") { mode = .text }
+                AddButton(title: "קלוריות", symbol: "bolt.fill") { quickText = ""; quickAdd = true }
+            }
+
+            let recent = food.recentFoods(limit: 10)
+            if !recent.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("אכלת לאחרונה").font(.subheadline.weight(.semibold))
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(recent) { entry in
+                                Button {
+                                    Task {
+                                        await food.relog(entry, at: FoodLog.entryDate(for: day))
+                                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                        justAdded = entry.name
+                                    }
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(entry.name).font(.subheadline).lineLimit(1)
+                                        Text([entry.grams.map { "\(Int(safe: $0)) ג׳" }, "\(Int(safe: entry.kcal)) קק\"ל"]
+                                                .compactMap { $0 }.joined(separator: " · "))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .frame(maxWidth: 200, minHeight: 52, alignment: .leading)
+                                    .background(Color(.tertiarySystemFill),
+                                                in: RoundedRectangle(cornerRadius: DS.tileRadius, style: .continuous))
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("הוסף שוב \(entry.name), \(Int(safe: entry.kcal)) קלוריות")
+                            }
+                        }
+                    }
+                    if let justAdded {
+                        Label("נוסף: \(justAdded)", systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                            .task(id: justAdded) {
+                                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                                self.justAdded = nil
+                            }
+                    }
+                }
             }
         }
         .sheet(item: $mode) { mode in
@@ -130,7 +177,7 @@ private struct AddFoodCard: View {
             case .barcode: BarcodeAddView(day: day)
             }
         }
-        .alert("הזנה מהירה", isPresented: $quickAdd) {
+        .alert("הוספת קלוריות", isPresented: $quickAdd) {
             TextField("קלוריות", text: $quickText).keyboardType(.numberPad)
             Button("הוסף") {
                 if let kcal = Double(quickText.filter(\.isNumber)), kcal > 0 {
@@ -139,7 +186,7 @@ private struct AddFoodCard: View {
             }
             Button("ביטול", role: .cancel) {}
         } message: {
-            Text(Calendar.current.isDateInToday(day) ? "כמה קלוריות להוסיף ליומן של היום?" : "כמה קלוריות להוסיף ליומן של \(day.formatted(Date.FormatStyle(date: .abbreviated, time: .omitted, locale: .he)))?")
+            Text("מספר קלוריות בלבד, בלי פירוט.")
         }
     }
 }
@@ -151,30 +198,53 @@ private struct AddButton: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 6) {
-                SoftIcon(symbol: symbol, size: 44)
+            VStack(spacing: 4) {
+                Image(systemName: symbol)
+                    .font(.title3)
+                    .foregroundStyle(Theme.accent)
                 Text(title)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
-            .frame(maxWidth: .infinity, minHeight: 72)
+            .frame(maxWidth: .infinity, minHeight: 64)
+            .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: DS.tileRadius, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityLabel("הוסף אוכל: \(title)")
     }
 }
 
-// MARK: - Today's diary
+// MARK: - Diary
 
+/// The day's food, grouped by meal like a food diary.
 private struct DiaryCard: View {
     let day: Date
     @ObservedObject private var food = FoodLog.shared
+
+    private enum Meal: Int, CaseIterable {
+        case breakfast, lunch, dinner
+        var title: String {
+            switch self {
+            case .breakfast: return "בוקר"
+            case .lunch: return "צהריים"
+            case .dinner: return "ערב"
+            }
+        }
+        static func of(_ date: Date) -> Meal {
+            let hour = Calendar.current.component(.hour, from: date)
+            if (4..<11).contains(hour) { return .breakfast }
+            if (11..<16).contains(hour) { return .lunch }
+            return .dinner
+        }
+    }
 
     var body: some View {
         let entries = food.entries(on: day)
         let isToday = Calendar.current.isDateInToday(day)
         Card {
-            CardHeader(title: isToday ? "יומן היום" : "יומן", symbol: "list.bullet") {
+            CardHeader(title: isToday ? "היומן של היום" : "יומן", symbol: "list.bullet") {
                 Text("\(Int(safe: entries.map(\.kcal).reduce(0, +)).formatted()) קק\"ל")
                     .font(.subheadline.weight(.semibold))
                     .monospacedDigit()
@@ -185,38 +255,66 @@ private struct DiaryCard: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(entries) { entry in
-                    HStack(spacing: 10) {
-                        Image(systemName: entry.source.symbol)
-                            .foregroundStyle(.secondary)
-                            .frame(width: 22)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(entry.name).font(.subheadline).lineLimit(2)
-                            Text([entry.date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: .he)),
-                                  entry.grams.map { "\(Int(safe: $0)) ג׳" }].compactMap { $0 }.joined(separator: " · "))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                let groups = Dictionary(grouping: entries, by: { Meal.of($0.date) })
+                ForEach(Meal.allCases, id: \.self) { meal in
+                    if let items = groups[meal], !items.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(meal.title).font(.subheadline.weight(.semibold))
+                                Spacer()
+                                Text("\(Int(safe: items.map(\.kcal).reduce(0, +)).formatted()) קק\"ל")
+                                    .font(.caption.weight(.semibold))
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                            }
+                            .accessibilityElement(children: .combine)
+                            .accessibilityAddTraits(.isHeader)
+                            ForEach(items.sorted { $0.date < $1.date }) { entry in
+                                row(entry)
+                            }
                         }
-                        Spacer()
-                        Text("\(Int(safe: entry.kcal))")
-                            .font(.subheadline.weight(.semibold))
-                            .monospacedDigit()
-                        Menu {
-                            Button("מחק", role: .destructive) { Task { await food.delete(entry) } }
-                        } label: {
-                            Image(systemName: "ellipsis.circle").foregroundStyle(.secondary)
-                                .frame(width: 32, height: 32)
-                        }
-                        .accessibilityLabel("אפשרויות עבור \(entry.name)")
                     }
-                    .frame(minHeight: 40)
                 }
             }
             if let error = food.lastError {
                 Notice(symbol: "exclamationmark.triangle.fill", color: .red, text: error)
             }
         }
+    }
+
+    private func row(_ entry: FoodEntry) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: entry.source.symbol)
+                .foregroundStyle(.secondary)
+                .frame(width: 22)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.name).font(.subheadline).lineLimit(2)
+                Text([entry.date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: .he)),
+                      entry.grams.map { "\(Int(safe: $0)) ג׳" }].compactMap { $0 }.joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text("\(Int(safe: entry.kcal))")
+                .font(.subheadline.weight(.semibold))
+                .monospacedDigit()
+            Menu {
+                Button {
+                    Task { await food.relog(entry, at: FoodLog.entryDate(for: day)) }
+                } label: { Label("הוסף שוב", systemImage: "plus.circle") }
+                Button(role: .destructive) {
+                    Task { await food.delete(entry) }
+                } label: { Label("מחק", systemImage: "trash") }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .frame(width: DS.minTap, height: DS.minTap)
+            }
+            .accessibilityLabel("אפשרויות עבור \(entry.name)")
+        }
+        .accessibilityElement(children: .contain)
     }
 }
 
