@@ -281,7 +281,12 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
         if #available(iOS 17.0, *) { threshold = 0.6 } else { threshold = 16 }
         var used = Set<UUID>()
         var found: [(UUID, ObjectShape)] = []
-        let objects = detectObjects(cg).sorted { $0.box.width * $0.box.height > $1.box.width * $1.box.height }.prefix(6)
+        // Skip huge regions (a counter top, a mouse pad with things on it): not one food,
+        // and matching them gave false labels in a cluttered kitchen.
+        let objects = detectObjects(cg)
+            .filter { $0.box.width * $0.box.height <= 0.3 }
+            .sorted { $0.box.width * $0.box.height > $1.box.width * $1.box.height }
+            .prefix(6)
         for object in objects {
             guard let print = featurePrint(object.box, in: cg) else { continue }
             // Nearest neighbour per food (a food can have several example fingerprints).
@@ -656,9 +661,9 @@ struct MealScannerView: View {
                         }
                     }
                     // Recognized foods stay on the food (anchored in the room); tap to add.
+                    let chips = chipPositions(in: geo.size)
                     ForEach(liveItems) { item in
-                        if let r = camera.onScreen[item.id] {
-                            let at = CGPoint(x: min(max(r.midX, 90), geo.size.width - 90), y: max(r.minY - 24, 70))
+                        if let r = camera.onScreen[item.id], let at = chips[item.id] {
                             let shape = outlines[item.id] ?? []
                             // The food itself is tappable too: tap adds, long press corrects.
                             FoodOutline(points: shape, added: tray.contains { $0.label == item.label })
@@ -816,7 +821,7 @@ struct MealScannerView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: added ? "checkmark.circle.fill" : "plus.circle.fill")
-                Text("\(item.label) · \(Int(safe: item.grams)) ג׳ · \(Int(safe: item.kcal)) קק\"ל")
+                Text(chipText(item))
                     .lineLimit(1)
             }
             .font(.subheadline.weight(.semibold))
@@ -833,6 +838,32 @@ struct MealScannerView: View {
         .contextMenu {
             Button { startCorrection(item) } label: { Label("זה בעצם…", systemImage: "pencil") }
         }
+    }
+
+    private func chipText(_ item: FoodDraft) -> String {
+        "\(item.label) · \(Int(safe: item.grams)) ג׳ · \(Int(safe: item.kcal)) קק\"ל"
+    }
+
+    /// Where each visible food's label goes: above its frame, fully on screen, and pushed
+    /// down below another label it would cover (several foods close together).
+    private func chipPositions(in size: CGSize) -> [UUID: CGPoint] {
+        let visible = liveItems
+            .compactMap { item -> (FoodDraft, CGRect)? in camera.onScreen[item.id].map { (item, $0) } }
+            .sorted { $0.1.minY < $1.1.minY }
+        var placed: [CGRect] = []
+        var result: [UUID: CGPoint] = [:]
+        for (item, r) in visible {
+            // Estimated width: the text plus the icon and padding.
+            let width = min(size.width - 24, CGFloat(chipText(item).count) * 8.5 + 64)
+            let x = min(max(r.midX, width / 2 + 12), size.width - width / 2 - 12)
+            var frame = CGRect(x: x - width / 2, y: max(r.minY - 24, 70) - 24, width: width, height: 48)
+            while let hit = placed.first(where: { $0.insetBy(dx: 0, dy: -3).intersects(frame) }) {
+                frame.origin.y = hit.maxY + 6
+            }
+            placed.append(frame)
+            result[item.id] = CGPoint(x: frame.midX, y: frame.midY)
+        }
+        return result
     }
 
     /// Adds a live food to the meal, with the label flying to Continue.
@@ -933,7 +964,7 @@ struct MealScannerView: View {
             // 1. On the phone: find remembered foods in view (e.g. the cup was moved) and put
             //    their labels there at once, without asking Claude again.
             let remembered = camera.rememberedPrints.map { ($0.0, $0.1, Float(1)) }
-                + FoodMemory.shared.prints(excluding: Set(memoryLink.values)).map { ($0.0, $0.1, Float(0.8)) }
+                + FoodMemory.shared.prints(excluding: Set(memoryLink.values)).map { ($0.0, $0.1, Float(0.55)) }
             if !remembered.isEmpty, Date().timeIntervalSince(lastLocalLook) > 0.6, let snap = camera.snapshot() {
                 lastLocalLook = Date()
                 let (frame, arFrame) = snap
@@ -955,8 +986,10 @@ struct MealScannerView: View {
                     // Already shown right there: leave it. Elsewhere or out of view: move it here.
                     if let shown = camera.onScreen[id], let here = camera.viewRect(for: box, imageSize: frame.size),
                        here.contains(CGPoint(x: shown.midX, y: shown.midY)) { continue }
+                    // No outline from a memory match: there's no answer from Claude to check the
+                    // segmented shape against, so a plain frame is safer.
                     if let spot = camera.anchor(box, from: arFrame) {
-                        if !shape.outline.isEmpty { outlines[id] = shape.outline }
+                        outlines[id] = nil
                         withAnimation(.easeOut(duration: 0.2)) { camera.set(id, spot) }
                     }
                 }
