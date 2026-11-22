@@ -409,6 +409,8 @@ struct MealScannerView: View {
     @State private var quickGuess: FoodDraft?
     /// Scanner item id → its entry in the on-phone food memory.
     @State private var memoryLink: [UUID: UUID] = [:]
+    /// Labels the user fixed by hand ("זה בעצם…"); a later answer from Claude doesn't override them.
+    @State private var userCorrected: Set<UUID> = []
     /// The food being corrected ("this is actually…"), and what the user typed.
     @State private var correcting: FoodDraft?
     @State private var correctionText = ""
@@ -734,6 +736,25 @@ struct MealScannerView: View {
         showCorrection = true
     }
 
+    /// Puts `fixed` in place of `item` (same id and place), in the live labels, the photo's
+    /// foods and an already-added copy, and teaches the visual memory the new name and values.
+    private func replace(_ item: FoodDraft, with fixed: FoodDraft) {
+        var fixed = fixed
+        fixed.id = item.id
+        if let entry = memoryLink[item.id] { FoodMemory.shared.correct(entry, with: fixed) }
+        withAnimation(.easeOut(duration: 0.2)) {
+            if let i = liveItems.firstIndex(where: { $0.id == item.id }) { liveItems[i] = fixed }
+            if let i = drafts.firstIndex(where: { $0.id == item.id }) { drafts[i] = fixed }
+            // Already added: replace the added copy too.
+            if let i = tray.firstIndex(where: { $0.label == item.label }) {
+                var copy = fixed
+                copy.id = tray[i].id
+                copy.box = nil
+                tray[i] = copy
+            }
+        }
+    }
+
     /// Replaces a misrecognized food with what the user says it is (values from the
     /// accurate model, same place and roughly the same amount).
     private func correct(_ item: FoodDraft, as text: String) async {
@@ -746,21 +767,9 @@ struct MealScannerView: View {
                 error = "לא הצלחתי למצוא ערכים ל\"\(name)\". נסה לנסח אחרת."
                 return
             }
-            fixed.id = item.id
             fixed.box = item.box
-            // Learn the correction, so this food is recognized correctly next time.
-            if let entry = memoryLink[item.id] { FoodMemory.shared.correct(entry, with: fixed) }
-            withAnimation(.easeOut(duration: 0.2)) {
-                if let i = liveItems.firstIndex(where: { $0.id == item.id }) { liveItems[i] = fixed }
-                if let i = drafts.firstIndex(where: { $0.id == item.id }) { drafts[i] = fixed }
-                // Already added before the fix: replace the added copy too.
-                if let i = tray.firstIndex(where: { $0.label == item.label }) {
-                    var copy = fixed
-                    copy.id = tray[i].id
-                    copy.box = nil
-                    tray[i] = copy
-                }
-            }
+            replace(item, with: fixed)
+            userCorrected.insert(item.id)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
         } catch {
             self.error = error.localizedDescription
@@ -852,10 +861,26 @@ struct MealScannerView: View {
                     guard let spot = camera.anchor(box, from: arFrame) else { continue }
                     // The same food seen again: it's the one already found. If it's somewhere
                     // else now (the cup was moved), move its frame there and resize it.
-                    if let known = liveItems.first(where: { $0.label == item.label }) {
+                    // A different name on the same object (memory said "קולה", Claude now says
+                    // "קולה זירו 500 מ\"ל") is still one object: Claude's fresh answer replaces the
+                    // old label, unless the user corrected that label by hand.
+                    let here = camera.viewRect(for: box, imageSize: frame.size)
+                    let samePlace = here.flatMap { here in
+                        liveItems.first { known in
+                            guard let shown = camera.onScreen[known.id] else { return false }
+                            return iou(shown, here) > 0.5
+                        }
+                    }
+                    if let known = liveItems.first(where: { $0.label == item.label }) ?? samePlace {
+                        if known.label != item.label, !userCorrected.contains(known.id) {
+                            var fresh = item
+                            fresh.box = box
+                            replace(known, with: fresh)
+                        }
                         camera.set(known.id, spot)
                         if let print = camera.remember(known.id, box: box, in: frame) {
-                            memoryLink[known.id] = FoodMemory.shared.learn(known, print: print,
+                            let current = liveItems.first(where: { $0.id == known.id }) ?? known
+                            memoryLink[known.id] = FoodMemory.shared.learn(current, print: print,
                                                                            quality: ARScanner.quality(box, in: frame),
                                                                            foodID: memoryLink[known.id])
                         }
@@ -1057,4 +1082,12 @@ private struct ProcessingSpot: View {
             withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) { pulse = true }
         }
     }
+}
+
+/// Intersection over union of two rectangles (0 = apart, 1 = the same).
+private func iou(_ a: CGRect, _ b: CGRect) -> CGFloat {
+    let inter = a.intersection(b)
+    guard !inter.isNull, inter.width > 0, inter.height > 0 else { return 0 }
+    let i = inter.width * inter.height
+    return i / (a.width * a.height + b.width * b.height - i)
 }
