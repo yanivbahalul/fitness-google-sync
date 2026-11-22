@@ -213,9 +213,11 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
     /// the phone itself (no network) when it shows up somewhere else.
     private var prints: [UUID: VNFeaturePrintObservation] = [:]
 
-    func remember(_ id: UUID, box: CGRect, in image: UIImage) {
-        guard let cg = image.cgImage, let print = Self.featurePrint(box, in: cg) else { return }
+    @discardableResult
+    func remember(_ id: UUID, box: CGRect, in image: UIImage) -> VNFeaturePrintObservation? {
+        guard let cg = image.cgImage, let print = Self.featurePrint(box, in: cg) else { return nil }
         prints[id] = print
+        return print
     }
 
     func forget(_ id: UUID) { prints[id] = nil }
@@ -235,7 +237,9 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
     /// Finds remembered foods among the objects in `image`: each object's fingerprint is
     /// compared with the remembered ones; a close enough match is that food. Runs on the
     /// phone in a few tens of milliseconds.
-    static func findRemembered(in image: UIImage, among prints: [(UUID, VNFeaturePrintObservation)]) -> [(UUID, CGRect)] {
+    /// `strictness` per fingerprint: 1 for this session's foods, lower (stricter) for
+    /// foods from earlier sessions, where light and angle differ more.
+    static func findRemembered(in image: UIImage, among prints: [(UUID, VNFeaturePrintObservation, Float)]) -> [(UUID, CGRect)] {
         guard !prints.isEmpty, let cg = image.cgImage else { return [] }
         // Fingerprints from the newer model (iOS 17+) are normalized: same object ≈ 0.2-0.5,
         // different objects ≈ 0.8+. The older model uses a much larger scale.
@@ -247,10 +251,10 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
         for object in objects {
             guard let print = featurePrint(object, in: cg) else { continue }
             var best: (UUID, Float)?
-            for (id, known) in prints where !used.contains(id) {
+            for (id, known, strictness) in prints where !used.contains(id) {
                 var distance: Float = .greatestFiniteMagnitude
                 try? print.computeDistance(&distance, to: known)
-                if distance < threshold, distance < (best?.1 ?? .greatestFiniteMagnitude) { best = (id, distance) }
+                if distance < threshold * strictness, distance < (best?.1 ?? .greatestFiniteMagnitude) { best = (id, distance) }
             }
             if let best {
                 used.insert(best.0)
@@ -381,6 +385,8 @@ struct MealScannerView: View {
     @State private var tray: [FoodDraft] = []
     /// Spots with a look still in progress ("processing" waits there).
     @State private var pending: Set<UUID> = []
+    /// Scanner item id → its entry in the on-phone food memory.
+    @State private var memoryLink: [UUID: UUID] = [:]
     /// The food being corrected ("this is actually…"), and what the user typed.
     @State private var correcting: FoodDraft?
     @State private var correctionText = ""
@@ -713,6 +719,8 @@ struct MealScannerView: View {
             }
             fixed.id = item.id
             fixed.box = item.box
+            // Learn the correction, so this food is recognized correctly next time.
+            if let entry = memoryLink[item.id] { FoodMemory.shared.correct(entry, with: fixed) }
             withAnimation(.easeOut(duration: 0.2)) {
                 if let i = liveItems.firstIndex(where: { $0.id == item.id }) { liveItems[i] = fixed }
                 if let i = drafts.firstIndex(where: { $0.id == item.id }) { drafts[i] = fixed }
@@ -756,14 +764,25 @@ struct MealScannerView: View {
 
             // 1. On the phone: find remembered foods in view (e.g. the cup was moved) and put
             //    their labels there at once, without asking Claude again.
-            let remembered = camera.rememberedPrints
+            let remembered = camera.rememberedPrints.map { ($0.0, $0.1, Float(1)) }
+                + FoodMemory.shared.prints(excluding: Set(memoryLink.values)).map { ($0.0, $0.1, Float(0.8)) }
             if !remembered.isEmpty, Date().timeIntervalSince(lastLocalLook) > 0.6, let snap = camera.snapshot() {
                 lastLocalLook = Date()
                 let (frame, arFrame) = snap
                 let matches = await Task.detached(priority: .userInitiated) {
                     ARScanner.findRemembered(in: frame, among: remembered)
                 }.value
-                for (id, box) in matches {
+                for (matchID, box) in matches {
+                    var id = matchID
+                    // A food from an earlier session: bring it into this scan from memory.
+                    if !liveItems.contains(where: { $0.id == matchID }) {
+                        guard var item = FoodMemory.shared.draft(for: matchID) else { continue }
+                        item.box = box
+                        id = item.id
+                        memoryLink[id] = matchID
+                        camera.remember(id, box: box, in: frame)
+                        withAnimation(.easeOut(duration: 0.25)) { liveItems.append(item) }
+                    }
                     // Already shown right there: leave it. Elsewhere or out of view: move it here.
                     if let shown = camera.onScreen[id], let here = camera.viewRect(for: box, imageSize: frame.size),
                        here.contains(CGPoint(x: shown.midX, y: shown.midY)) { continue }
@@ -798,12 +817,16 @@ struct MealScannerView: View {
                     // else now (the cup was moved), move its frame there and resize it.
                     if let known = liveItems.first(where: { $0.label == item.label }) {
                         camera.set(known.id, spot)
-                        camera.remember(known.id, box: box, in: frame)
+                        if let print = camera.remember(known.id, box: box, in: frame) {
+                            memoryLink[known.id] = FoodMemory.shared.learn(known, print: print, entryID: memoryLink[known.id])
+                        }
                         added = true
                         continue
                     }
                     camera.set(item.id, spot)
-                    camera.remember(item.id, box: box, in: frame)
+                    if let print = camera.remember(item.id, box: box, in: frame) {
+                        memoryLink[item.id] = FoodMemory.shared.learn(item, print: print)
+                    }
                     withAnimation(.easeOut(duration: 0.25)) { liveItems.append(item) }
                     added = true
                 } else if item.box == nil, !liveItems.contains(where: { $0.label == item.label }) {
