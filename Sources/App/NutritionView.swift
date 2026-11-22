@@ -178,44 +178,9 @@ private struct DiaryCard: View {
                     }
                 }
             }
-            recents
             if let error = food.lastError {
                 Notice(symbol: "exclamationmark.triangle.fill", color: .red, text: error)
             }
-        }
-    }
-
-    /// Recently eaten foods: one tap logs them again on this day.
-    @ViewBuilder private var recents: some View {
-        let recent = food.recentFoods(limit: 10)
-        if !recent.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("הוסף שוב").font(.subheadline.weight(.semibold))
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(recent) { entry in
-                            Button {
-                                Task {
-                                    await food.relog(entry, at: FoodLog.entryDate(for: day))
-                                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                }
-                            } label: {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(entry.name).font(.subheadline).lineLimit(1)
-                                    Text("\(Int(safe: entry.kcal)) קק\"ל").font(.caption).foregroundStyle(.secondary)
-                                }
-                                .padding(.horizontal, 12)
-                                .frame(maxWidth: 180, minHeight: 52, alignment: .leading)
-                                .background(Color(.tertiarySystemFill),
-                                            in: RoundedRectangle(cornerRadius: DS.tileRadius, style: .continuous))
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("הוסף שוב \(entry.name), \(Int(safe: entry.kcal)) קלוריות")
-                        }
-                    }
-                }
-            }
-            .padding(.top, 4)
         }
     }
 

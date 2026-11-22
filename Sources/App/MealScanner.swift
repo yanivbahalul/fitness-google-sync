@@ -276,6 +276,10 @@ struct MealScannerView: View {
     @State private var tray: [FoodDraft] = []
     /// Spots with a look still in progress ("processing" waits there).
     @State private var pending: Set<UUID> = []
+    /// The food being corrected ("this is actually…"), and what the user typed.
+    @State private var correcting: FoodDraft?
+    @State private var correctionText = ""
+    @State private var showCorrection = false
     /// Labels flying from a tapped food down to the Continue button.
     @State private var flyers: [Flyer] = []
     @State private var trayBump = false
@@ -292,7 +296,7 @@ struct MealScannerView: View {
             ZStack {
                 Color.black.ignoresSafeArea()
                 if let image {
-                    ResultCanvas(image: image, drafts: $drafts, analyzing: analyzing)
+                    ResultCanvas(image: image, drafts: $drafts, analyzing: analyzing) { startCorrection($0) }
                 } else {
                     liveView
                 }
@@ -327,6 +331,15 @@ struct MealScannerView: View {
                         error = "התמונה לא נטענה (ייתכן שהיא שמורה רק ב‑iCloud)."
                     }
                 }
+            }
+            .alert("מה זה באמת?", isPresented: $showCorrection) {
+                TextField("למשל: סוכריות גומי GOOM", text: $correctionText)
+                Button("עדכן") {
+                    if let item = correcting { Task { await correct(item, as: correctionText) } }
+                }
+                Button("ביטול", role: .cancel) {}
+            } message: {
+                Text(correcting.map { "זוהה כ\"\($0.label)\". כתוב מה זה, ואעדכן את הערכים." } ?? "")
             }
             .alert("מה יש בצלחת?", isPresented: $typing) {
                 TextField("למשל: קפה הפוך גדול, 2 פרוסות לחם", text: $typedText)
@@ -569,6 +582,47 @@ struct MealScannerView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(added ? "\(item.label) נוסף" : "הוסף \(item.label), \(Int(safe: item.kcal)) קלוריות")
+        .accessibilityHint("לחיצה ארוכה לתיקון אם זוהה לא נכון")
+        .contextMenu {
+            Button { startCorrection(item) } label: { Label("זה בעצם…", systemImage: "pencil") }
+        }
+    }
+
+    private func startCorrection(_ item: FoodDraft) {
+        correcting = item
+        correctionText = ""
+        showCorrection = true
+    }
+
+    /// Replaces a misrecognized food with what the user says it is (values from the
+    /// accurate model, same place and roughly the same amount).
+    private func correct(_ item: FoodDraft, as text: String) async {
+        let name = text.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        do {
+            let result = try await MealAnalyzer.analyze(
+                image: nil, text: "\(name). כמות משוערת לפי התמונה: \(Int(safe: item.grams)) גרם.")
+            guard var fixed = result.first else {
+                error = "לא הצלחתי למצוא ערכים ל\"\(name)\". נסה לנסח אחרת."
+                return
+            }
+            fixed.id = item.id
+            fixed.box = item.box
+            withAnimation(.easeOut(duration: 0.2)) {
+                if let i = liveItems.firstIndex(where: { $0.id == item.id }) { liveItems[i] = fixed }
+                if let i = drafts.firstIndex(where: { $0.id == item.id }) { drafts[i] = fixed }
+                // Already added before the fix: replace the added copy too.
+                if let i = tray.firstIndex(where: { $0.label == item.label }) {
+                    var copy = fixed
+                    copy.id = tray[i].id
+                    copy.box = nil
+                    tray[i] = copy
+                }
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 
     /// "Recognizing…" / what to do, at the top of the live view.
@@ -691,6 +745,8 @@ private struct ResultCanvas: View {
     let image: UIImage
     @Binding var drafts: [FoodDraft]
     let analyzing: Bool
+    /// Long-press a frame: "this is actually…".
+    let onCorrect: (FoodDraft) -> Void
     @State private var pulse = false
 
     var body: some View {
@@ -733,7 +789,10 @@ private struct ResultCanvas: View {
                         .position(x: r.midX, y: r.midY)
                         .accessibilityLabel("\(draft.label), \(Int(safe: draft.grams)) גרם, \(Int(safe: draft.kcal)) קלוריות")
                         .accessibilityValue(draft.include ? "נבחר" : "לא נבחר")
-                        .accessibilityHint("הקש כדי לבחור או לבטל")
+                        .accessibilityHint("הקש כדי לבחור או לבטל. לחיצה ארוכה לתיקון")
+                        .contextMenu {
+                            Button { onCorrect(draft) } label: { Label("זה בעצם…", systemImage: "pencil") }
+                        }
                     }
                 }
             }
