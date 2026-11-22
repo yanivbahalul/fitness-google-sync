@@ -122,6 +122,8 @@ enum MealAnalyzer {
     משקאות (קפה, תה, מיץ, שייק, משקה בכוס) הם חלק מהארוחה: זהה אותם, למשל "קפה הפוך" עם כמות במ"ל לפי גודל הכוס.
     לכל פריט חובה name_he לא ריק ו‑grams גדול מ‑0. פריט שאינך יכול לזהות אל תכלול.
     פרק מנה מורכבת לרכיביה העיקריים (למשל פיתה + פלאפל + חומוס). אל תכלול כלים, מפות או אריזות. אם אין אוכל, החזר רשימה ריקה.
+    בצלחת מעורבת (קערה, מוקפץ, צלחת עם תוספות) תן לכל רכיב שרואים פריט משלו עם כמות משלו, כולל מקורות שומן נראים (שמן, טחינה, רוטב, גבינה מגוררת). מנה אחידה כמו סלט ירקות קצוץ נשארת פריט אחד. אל תאחד שני מאכלים שונים לפריט אחד ואל תפצל מאכל אחד לכמה פריטים.
+    עבור כל פריט, box צריך לתחום רק אותו, צמוד ככל האפשר.
     """
 
     private static let schema: [String: Any] = [
@@ -167,7 +169,9 @@ enum MealAnalyzer {
     /// the camera: the fast model on a smaller frame, a single attempt.
     /// `seenText` is text read on the phone from the image (wrappers, labels); a brand name
     /// there (TWIX) identifies a packaged product better than its look does.
-    static func analyze(image: UIImage?, text: String?, live: Bool = false, seenText: [String] = []) async throws -> [FoodDraft] {
+    /// `alreadyAdded` are foods the user already added while aiming; they aren't returned again.
+    static func analyze(image: UIImage?, text: String?, live: Bool = false, seenText: [String] = [],
+                        alreadyAdded: [String] = []) async throws -> [FoodDraft] {
         guard let key = AnthropicKeyStore.key else { throw MealAnalyzerError.noKey }
         let model = live ? MealModel.haiku : MealModel.current
 
@@ -187,6 +191,10 @@ enum MealAnalyzer {
                 + "בעיקר במרכז התמונה, שהמשתמש כנראה עומד לאכול. התעלם מחפצים שאינם מזון, ממכשירים "
                 + "(מכונת קפה, קומקום), מאריזות סגורות ברקע ומפריטים קטנים או רחוקים שקשה לזהות. "
                 + "אם אין מזון ברור, החזר רשימה ריקה. אל תנחש."
+        }
+        if !alreadyAdded.isEmpty {
+            prompt += "\n\nהמשתמש כבר הוסיף מהסריקה: \(alreadyAdded.joined(separator: ", ")). "
+                + "הם כבר נספרו: אל תחזיר אותם שוב (גם לא בשם אחר), אלא אם רואים בתמונה מנה נוספת שלהם. החזר רק את שאר מה שבתמונה."
         }
         if !seenText.isEmpty {
             prompt += "\n\nטקסט שזוהה בתמונה (על אריזות ותוויות): \(seenText.joined(separator: ", ")). "
