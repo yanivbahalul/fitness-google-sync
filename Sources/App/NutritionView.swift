@@ -34,9 +34,9 @@ struct ProgressPage: View {
         }
         .task { await progress.refresh(sync: sync, food: food) }
         .refreshable { await progress.refresh(sync: sync, food: food) }
-        .onChange(of: food.entries) { _ in Task { await progress.refresh(sync: sync, food: food) } }
-        .onChange(of: sync.lastSyncDate) { _ in Task { await progress.refresh(sync: sync, food: food) } }
-        .onChange(of: scenePhase) { phase in
+        .onChange(of: food.entries) { Task { await progress.refresh(sync: sync, food: food) } }
+        .onChange(of: sync.lastSyncDate) { Task { await progress.refresh(sync: sync, food: food) } }
+        .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             Task { await progress.refresh(sync: sync, food: food) }
         }
@@ -246,7 +246,7 @@ private struct ProgressSection: View {
                     ForEach(ProgressModel.Range.allCases) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                .onChange(of: progress.range) { _ in
+                .onChange(of: progress.range) { _, _ in
                     Task { await progress.refresh(sync: sync, food: FoodLog.shared) }
                 }
             }

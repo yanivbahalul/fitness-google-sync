@@ -74,7 +74,7 @@ struct SettingsView: View {
                     Toggle(isOn: $backgroundSync) {
                         SettingLabel("ברקע", symbol: "moon.zzz")
                     }
-                    .onChange(of: backgroundSync) { _ in
+                    .onChange(of: backgroundSync) { _, _ in
                             BackgroundSync.schedule()
                             HealthObserver.update()
                         }
@@ -176,7 +176,7 @@ struct SettingsView: View {
                     Toggle(isOn: $expiryReminder) {
                         SettingLabel("תזכורת לחידוש ב‑Xcode", symbol: "hammer")
                     }
-                    .onChange(of: expiryReminder) { on in Notifier.scheduleExpiryReminders(enabled: on) }
+                    .onChange(of: expiryReminder) { _, on in Notifier.scheduleExpiryReminders(enabled: on) }
                     if let expiry {
                         LabeledContent("האפליקציה בתוקף עד", value: expiry.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, locale: .he)))
                     }

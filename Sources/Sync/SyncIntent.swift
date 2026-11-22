@@ -44,7 +44,9 @@ struct StepsBridgeShortcuts: AppShortcutsProvider {
             phrases: [
                 "Sync \(.applicationName)",
                 "סנכרן את \(.applicationName)",
-            ]
+            ],
+            shortTitle: "סנכרון",
+            systemImageName: "arrow.triangle.2.circlepath"
         )
         AppShortcut(
             intent: AddEatenIntent(),
@@ -53,7 +55,9 @@ struct StepsBridgeShortcuts: AppShortcutsProvider {
                 "הזן קלוריות ב\(.applicationName)",
                 "Add calories in \(.applicationName)",
                 "Log calories in \(.applicationName)",
-            ]
+            ],
+            shortTitle: "הוספת קלוריות",
+            systemImageName: "fork.knife"
         )
     }
 }

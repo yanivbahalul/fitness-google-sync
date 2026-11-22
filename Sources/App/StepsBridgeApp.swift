@@ -20,7 +20,7 @@ struct StepsBridgeApp: App {
                     Notifier.scheduleExpiryReminders(enabled: AppSettings.expiryReminder)
                 }
         }
-        .onChange(of: scenePhase) { phase in
+        .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active:
                 autoSyncIfNeeded()

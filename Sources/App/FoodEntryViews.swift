@@ -142,7 +142,7 @@ private struct DraftRow: View {
                     .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .focused(focused, equals: draft.id)
                     .accessibilityLabel("כמות בגרם")
-                    .onChange(of: gramsText) { value in
+                    .onChange(of: gramsText) { _, value in
                         if let g = Double(value.replacingOccurrences(of: ",", with: ".")), g > 0 { draft.grams = g }
                     }
                 Text("ג׳").foregroundStyle(.secondary)
@@ -247,7 +247,7 @@ struct FoodPickerSheet: View {
                 }
             }
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "חיפוש במאגר צמרת")
-            .onChange(of: query) { search($0) }
+            .onChange(of: query) { _, q in search(q) }
             .onAppear {
                 if query.isEmpty, !initialQuery.isEmpty { query = initialQuery; search(initialQuery) }
             }
@@ -315,7 +315,7 @@ struct FoodSearchView: View {
                         }
                     }
                     .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "חיפוש במאגר צמרת")
-                    .onChange(of: query) { q in
+                    .onChange(of: query) { _, q in
                         let current = q
                         Task.detached(priority: .userInitiated) {
                             let found = FoodDatabase.shared.search(current)
