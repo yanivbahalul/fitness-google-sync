@@ -1,15 +1,31 @@
 import Foundation
 import Vision
 
-/// Foods the scanner has recognized before, kept on the iPhone: a visual fingerprint
-/// (Vision feature print, not the photo) with the name and nutrition values. The scanner
-/// checks new objects against it on the phone first, so a food seen before is labelled at
-/// once without asking Claude. User corrections are learned too.
+/// Foods the scanner has recognized before, kept on the iPhone, so a food seen before is
+/// labelled on the phone at once instead of asking Claude again.
+///
+/// How it learns (few-shot, nearest neighbour on Vision's on-device image embeddings):
+/// - Each food (by name) keeps up to 6 example fingerprints (Vision feature prints, not
+///   photos) taken from different looks: angle, light, cup.
+/// - A new look that is nearly identical to an existing example isn't stored twice; the
+///   better-quality one of the two is kept (bigger, sharper, better lit).
+/// - A new look that differs (another cup, other light) but is the same food per Claude
+///   becomes another example, so recognition gets broader and faster with use.
+/// - Matching compares an object with every example and takes the closest food, only when
+///   it is clearly closer than the next food.
+/// - User corrections rename the food's memory, so it is right next time.
 @MainActor
 final class FoodMemory {
     static let shared = FoodMemory()
 
-    struct Entry: Codable {
+    struct Example: Codable {
+        /// Archived VNFeaturePrintObservation.
+        var print: Data
+        var quality: Float
+        var lastSeen = Date()
+    }
+
+    struct Food: Codable {
         var id = UUID()
         var label: String
         var grams: Double
@@ -19,97 +35,130 @@ final class FoodMemory {
         var fatPer100: Double
         /// Tzameret food code when the values came from the database.
         var foodCode: Int?
-        /// Archived VNFeaturePrintObservation.
-        var print: Data
+        var examples: [Example] = []
         var lastSeen = Date()
         var uses = 1
     }
 
-    private(set) var entries: [Entry] = []
-    private var decoded: [UUID: VNFeaturePrintObservation] = [:]
-    private let maxEntries = 300
+    private(set) var foods: [Food] = []
+    private var decoded: [Data: VNFeaturePrintObservation] = [:]
+    private let maxFoods = 200
+    private let maxExamples = 6
     private let fileURL: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("food-memory.json")
+        return dir.appendingPathComponent("food-memory-v2.json")
     }()
 
     init() {
         if let data = try? Data(contentsOf: fileURL),
-           let saved = try? JSONDecoder().decode([Entry].self, from: data) {
-            entries = saved
+           let saved = try? JSONDecoder().decode([Food].self, from: data) {
+            foods = saved
         }
     }
 
-    /// Fingerprints of remembered foods (excluding ones already in use this session).
+    /// Two looks closer than this are the same image for memory purposes.
+    private var sameLook: Float {
+        if #available(iOS 17.0, *) { return 0.25 } else { return 7 }
+    }
+
+    private func observation(_ data: Data) -> VNFeaturePrintObservation? {
+        if let cached = decoded[data] { return cached }
+        let print = try? NSKeyedUnarchiver.unarchivedObject(ofClass: VNFeaturePrintObservation.self, from: data)
+        decoded[data] = print
+        return print
+    }
+
+    /// Every example fingerprint, labelled with its food (excluding foods already shown).
     func prints(excluding ids: Set<UUID>) -> [(UUID, VNFeaturePrintObservation)] {
-        entries.compactMap { entry in
-            guard !ids.contains(entry.id) else { return nil }
-            if let cached = decoded[entry.id] { return (entry.id, cached) }
-            guard let print = try? NSKeyedUnarchiver.unarchivedObject(ofClass: VNFeaturePrintObservation.self,
-                                                                       from: entry.print) else { return nil }
-            decoded[entry.id] = print
-            return (entry.id, print)
+        foods.filter { !ids.contains($0.id) }.flatMap { food in
+            food.examples.compactMap { ex in observation(ex.print).map { (food.id, $0) } }
         }
     }
 
     /// The remembered food as a new draft to show and log.
     func draft(for id: UUID) -> FoodDraft? {
-        guard let i = entries.firstIndex(where: { $0.id == id }) else { return nil }
-        entries[i].lastSeen = Date()
-        entries[i].uses += 1
+        guard let i = foods.firstIndex(where: { $0.id == id }) else { return nil }
+        foods[i].lastSeen = Date()
+        foods[i].uses += 1
         save()
-        let e = entries[i]
-        let food = e.foodCode.flatMap { code in FoodDatabase.shared.foods.first { $0.code == code } }
-        return FoodDraft(label: e.label, food: food, grams: e.grams,
-                         kcalPer100: e.kcalPer100, proteinPer100: e.proteinPer100,
-                         carbsPer100: e.carbsPer100, fatPer100: e.fatPer100,
-                         portionNote: "זוהה מהזיכרון")
+        let f = foods[i]
+        let item = f.foodCode.flatMap { code in FoodDatabase.shared.foods.first { $0.code == code } }
+        var draft = FoodDraft(label: f.label, food: item, grams: f.grams,
+                              kcalPer100: f.kcalPer100, proteinPer100: f.proteinPer100,
+                              carbsPer100: f.carbsPer100, fatPer100: f.fatPer100,
+                              portionNote: "זוהה מהזיכרון")
+        draft.id = UUID()
+        return draft
     }
 
-    /// Stores (or updates) a food with its fingerprint. Returns the memory entry's id.
+    /// Adds a look of a food. Returns the food's memory id.
     @discardableResult
-    func learn(_ draft: FoodDraft, print: VNFeaturePrintObservation, entryID: UUID? = nil) -> UUID? {
+    func learn(_ draft: FoodDraft, print: VNFeaturePrintObservation, quality: Float, foodID: UUID? = nil) -> UUID? {
         guard let data = try? NSKeyedArchiver.archivedData(withRootObject: print, requiringSecureCoding: true) else { return nil }
-        let food = draft.food
-        var entry = Entry(label: draft.label, grams: draft.grams,
-                          kcalPer100: food?.kcal ?? draft.kcalPer100, proteinPer100: food?.protein ?? draft.proteinPer100,
-                          carbsPer100: food?.carbs ?? draft.carbsPer100, fatPer100: food?.fat ?? draft.fatPer100,
-                          foodCode: food?.code, print: data)
-        if let entryID, let i = entries.firstIndex(where: { $0.id == entryID }) {
-            entry.id = entryID
-            entry.uses = entries[i].uses + 1
-            entries[i] = entry
+        let name = draft.label.trimmingCharacters(in: .whitespaces)
+        let index = foodID.flatMap { id in foods.firstIndex { $0.id == id } }
+            ?? foods.firstIndex { $0.label.trimmingCharacters(in: .whitespaces) == name }
+        var food: Food
+        if let index {
+            food = foods[index]
         } else {
-            entries.append(entry)
+            let item = draft.food
+            food = Food(label: name, grams: draft.grams,
+                        kcalPer100: item?.kcal ?? draft.kcalPer100, proteinPer100: item?.protein ?? draft.proteinPer100,
+                        carbsPer100: item?.carbs ?? draft.carbsPer100, fatPer100: item?.fat ?? draft.fatPer100,
+                        foodCode: item?.code)
         }
-        decoded[entry.id] = print
-        // Keep the most recently seen foods.
-        if entries.count > maxEntries {
-            entries.sort { $0.lastSeen > $1.lastSeen }
-            for removed in entries[maxEntries...] { decoded[removed.id] = nil }
-            entries = Array(entries.prefix(maxEntries))
+        decoded[data] = print
+        let example = Example(print: data, quality: quality)
+
+        // Nearly the same look as an existing example: keep the better one.
+        var closest: (index: Int, distance: Float)?
+        for (i, ex) in food.examples.enumerated() {
+            guard let known = observation(ex.print) else { continue }
+            var d: Float = .greatestFiniteMagnitude
+            try? print.computeDistance(&d, to: known)
+            if d < (closest?.distance ?? .greatestFiniteMagnitude) { closest = (i, d) }
+        }
+        if let closest, closest.distance < sameLook {
+            if quality > food.examples[closest.index].quality { food.examples[closest.index] = example }
+            else { food.examples[closest.index].lastSeen = Date() }
+        } else if food.examples.count < maxExamples {
+            food.examples.append(example)
+        } else {
+            // Full: replace the weakest example (oldest of the lowest quality).
+            let weakest = food.examples.indices.min { a, b in
+                (food.examples[a].quality, food.examples[a].lastSeen) < (food.examples[b].quality, food.examples[b].lastSeen)
+            }!
+            food.examples[weakest] = example
+        }
+        food.lastSeen = Date()
+
+        if let index { foods[index] = food } else { foods.append(food) }
+        if foods.count > maxFoods {
+            foods.sort { $0.lastSeen > $1.lastSeen }
+            foods = Array(foods.prefix(maxFoods))
         }
         save()
-        return entry.id
+        return food.id
     }
 
-    /// Updates what a remembered food is (after the user corrected it).
-    func correct(_ entryID: UUID, with draft: FoodDraft) {
-        guard let i = entries.firstIndex(where: { $0.id == entryID }) else { return }
-        let food = draft.food
-        entries[i].label = draft.label
-        entries[i].grams = draft.grams
-        entries[i].kcalPer100 = food?.kcal ?? draft.kcalPer100
-        entries[i].proteinPer100 = food?.protein ?? draft.proteinPer100
-        entries[i].carbsPer100 = food?.carbs ?? draft.carbsPer100
-        entries[i].fatPer100 = food?.fat ?? draft.fatPer100
-        entries[i].foodCode = food?.code
+    /// The user said what a remembered food really is: rename it and take its values.
+    func correct(_ foodID: UUID, with draft: FoodDraft) {
+        guard let i = foods.firstIndex(where: { $0.id == foodID }) else { return }
+        let item = draft.food
+        foods[i].label = draft.label
+        foods[i].grams = draft.grams
+        foods[i].kcalPer100 = item?.kcal ?? draft.kcalPer100
+        foods[i].proteinPer100 = item?.protein ?? draft.proteinPer100
+        foods[i].carbsPer100 = item?.carbs ?? draft.carbsPer100
+        foods[i].fatPer100 = item?.fat ?? draft.fatPer100
+        foods[i].foodCode = item?.code
         save()
     }
 
     private func save() {
-        if let data = try? JSONEncoder().encode(entries) {
+        if let data = try? JSONEncoder().encode(foods) {
             try? data.write(to: fileURL, options: .atomic)
         }
     }

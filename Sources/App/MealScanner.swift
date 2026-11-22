@@ -250,18 +250,38 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
         let objects = detectObjects(cg).sorted { $0.width * $0.height > $1.width * $1.height }.prefix(6)
         for object in objects {
             guard let print = featurePrint(object, in: cg) else { continue }
-            var best: (UUID, Float)?
+            // Nearest neighbour per food (a food can have several example fingerprints).
+            var nearest: [UUID: (distance: Float, limit: Float)] = [:]
             for (id, known, strictness) in prints where !used.contains(id) {
                 var distance: Float = .greatestFiniteMagnitude
                 try? print.computeDistance(&distance, to: known)
-                if distance < threshold * strictness, distance < (best?.1 ?? .greatestFiniteMagnitude) { best = (id, distance) }
+                if distance < (nearest[id]?.distance ?? .greatestFiniteMagnitude) {
+                    nearest[id] = (distance, threshold * strictness)
+                }
             }
-            if let best {
-                used.insert(best.0)
-                found.append((best.0, object))
-            }
+            let ranked = nearest.sorted { $0.value.distance < $1.value.distance }
+            guard let best = ranked.first, best.value.distance < best.value.limit else { continue }
+            // Ambiguous (two foods almost equally close): don't guess, let Claude decide.
+            if ranked.count > 1, best.value.distance > ranked[1].value.distance * 0.85 { continue }
+            used.insert(best.key)
+            found.append((best.key, object))
         }
         return found
+    }
+
+    /// How good a crop is as an example: bigger and better-looking (sharp, well lit) is
+    /// better. Uses Vision's image-quality model on iOS 18+.
+    static func quality(_ box: CGRect, in image: UIImage) -> Float {
+        guard let cg = image.cgImage else { return 0 }
+        let w = CGFloat(cg.width), h = CGFloat(cg.height)
+        let rect = CGRect(x: box.minX * w, y: box.minY * h, width: box.width * w, height: box.height * h).integral
+        var score = Float(box.width * box.height)
+        if #available(iOS 18.0, *), let crop = cg.cropping(to: rect) {
+            let request = VNCalculateImageAestheticsScoresRequest()
+            try? VNImageRequestHandler(cgImage: crop, options: [:]).perform([request])
+            if let overall = request.results?.first?.overallScore { score *= (1 + overall) }
+        }
+        return score
     }
 
     /// Bounding boxes of the separate objects Vision finds (fractions, top-left origin).
@@ -818,14 +838,17 @@ struct MealScannerView: View {
                     if let known = liveItems.first(where: { $0.label == item.label }) {
                         camera.set(known.id, spot)
                         if let print = camera.remember(known.id, box: box, in: frame) {
-                            memoryLink[known.id] = FoodMemory.shared.learn(known, print: print, entryID: memoryLink[known.id])
+                            memoryLink[known.id] = FoodMemory.shared.learn(known, print: print,
+                                                                           quality: ARScanner.quality(box, in: frame),
+                                                                           foodID: memoryLink[known.id])
                         }
                         added = true
                         continue
                     }
                     camera.set(item.id, spot)
                     if let print = camera.remember(item.id, box: box, in: frame) {
-                        memoryLink[item.id] = FoodMemory.shared.learn(item, print: print)
+                        memoryLink[item.id] = FoodMemory.shared.learn(item, print: print,
+                                                                      quality: ARScanner.quality(box, in: frame))
                     }
                     withAnimation(.easeOut(duration: 0.25)) { liveItems.append(item) }
                     added = true
