@@ -342,5 +342,8 @@ Check the key in Settings and the balance at console.anthropic.com.
 
 - Food nutrients: **Israeli National Nutrition Database (Tzameret)**, Ministry of Health,
   via [data.gov.il](https://data.gov.il/dataset/nutrition-database).
+- More foods (about 8,000, English names): **USDA FoodData Central**, SR Legacy and
+  Foundation Foods ([fdc.nal.usda.gov](https://fdc.nal.usda.gov/), public domain), used when a
+  food isn't in Tzameret.
 - Packaged foods: [Open Food Facts](https://world.openfoodfacts.org/) (ODbL).
 - Health data: [Google Health API](https://developers.google.com/health).

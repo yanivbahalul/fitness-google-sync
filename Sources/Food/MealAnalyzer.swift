@@ -84,6 +84,7 @@ enum MealAnalyzerError: LocalizedError {
 enum MealAnalyzer {
     struct Item: Decodable {
         let name_he: String
+        let name_en: String
         let search_terms: [String]
         let grams: Double
         let kcal_per_100g: Double
@@ -109,6 +110,7 @@ enum MealAnalyzer {
     private static let instructions = """
     אתה עוזר תזונה. זהה כל מאכל ומשקה בארוחה ששלחו לך (בתמונה או בתיאור), והערך כמה גרם נאכלו מכל אחד.
     - name_he: שם קצר בעברית כפי שמקובל בישראל (למשל "שניצל עוף", "אורז לבן מבושל", "סלט ירקות").
+    - name_en: אותו מאכל באנגלית כפי שמופיע במאגר USDA (למשל "Coffee, brewed", "Rice, white, cooked").
     - search_terms: 1–3 מילות חיפוש בעברית למאגר מזון ישראלי, מהכללית לספציפית (למשל ["שניצל", "חזה עוף מטוגן"]).
     - grams: הכמות שנאכלה בגרמים (משקאות במ"ל ≈ גרם). אם בתיאור כתובה כמות ("2 פרוסות", "כוס"), המר לגרמים.
     - ערכים ל‑100 גרם (kcal, protein, carbs, fat): הערכה שלך למאכל במצב שבו הוא נאכל (מבושל/מטוגן/אפוי), לשימוש רק אם המאכל לא יימצא במאגר.
@@ -131,6 +133,7 @@ enum MealAnalyzer {
                     "type": "object",
                     "properties": [
                         "name_he": ["type": "string"],
+                        "name_en": ["type": "string"],
                         "search_terms": ["type": "array", "items": ["type": "string"]],
                         "grams": ["type": "number"],
                         "kcal_per_100g": ["type": "number"],
@@ -149,7 +152,7 @@ enum MealAnalyzer {
                             "additionalProperties": false,
                         ],
                     ],
-                    "required": ["name_he", "search_terms", "grams", "kcal_per_100g",
+                    "required": ["name_he", "name_en", "search_terms", "grams", "kcal_per_100g",
                                  "protein_per_100g", "carbs_per_100g", "fat_per_100g",
                                  "portion_note", "confidence", "box"],
                     "additionalProperties": false,
@@ -254,7 +257,8 @@ enum MealAnalyzer {
     private static func candidates(for item: Item) -> [FoodItem] {
         var seen = Set<Int>()
         var result: [FoodItem] = []
-        for term in item.search_terms.reversed() + [item.name_he] {
+        // Israeli database first (Hebrew terms), then USDA by the English name.
+        for term in item.search_terms.reversed() + [item.name_he, item.name_en] where !term.isEmpty {
             for food in FoodDatabase.shared.search(term, limit: 5) where seen.insert(food.code).inserted {
                 result.append(food)
             }

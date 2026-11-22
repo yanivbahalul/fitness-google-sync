@@ -186,7 +186,7 @@ private struct DraftRow: View {
             HStack(spacing: 6) {
                 Image(systemName: draft.food == nil ? "sparkles" : "checkmark.seal.fill")
                     .foregroundStyle(draft.food == nil ? Color.secondary : Theme.accent)
-                Text(draft.food.map { "מאגר צמרת: \($0.name)" } ?? "הערכה (לא נמצא במאגר)")
+                Text(draft.food.map { "\($0.sourceName): \($0.name)" } ?? "הערכה (לא נמצא במאגר)")
                     .font(.subheadline)
                     .multilineTextAlignment(.leading)
                     .lineLimit(2)
