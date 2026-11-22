@@ -165,7 +165,9 @@ enum MealAnalyzer {
 
     /// Analyzes a photo, a text description, or both. `live` is the quick look while aiming
     /// the camera: the fast model on a smaller frame, a single attempt.
-    static func analyze(image: UIImage?, text: String?, live: Bool = false) async throws -> [FoodDraft] {
+    /// `seenText` is text read on the phone from the image (wrappers, labels); a brand name
+    /// there (TWIX) identifies a packaged product better than its look does.
+    static func analyze(image: UIImage?, text: String?, live: Bool = false, seenText: [String] = []) async throws -> [FoodDraft] {
         guard let key = AnthropicKeyStore.key else { throw MealAnalyzerError.noKey }
         let model = live ? MealModel.haiku : MealModel.current
 
@@ -179,6 +181,10 @@ enum MealAnalyzer {
         var prompt = instructions
         if let text, !text.trimmingCharacters(in: .whitespaces).isEmpty {
             prompt += "\n\nתיאור הארוחה מהמשתמש: \(text)"
+        }
+        if !seenText.isEmpty {
+            prompt += "\n\nטקסט שזוהה בתמונה (על אריזות ותוויות): \(seenText.joined(separator: ", ")). "
+                + "אם זה שם מותג או מוצר, זהה לפיו את המוצר המדויק (למשל TWIX ← טוויקס) ואת ערכיו לפי האריזה."
         }
         content.append(["type": "text", "text": prompt])
 
@@ -194,7 +200,7 @@ enum MealAnalyzer {
             "messages": [["role": "user", "content": content]],
         ]
         if model.supportsFallbacks { body["fallbacks"] = "default" }
-        // The live look-up skips thinking for speed (Haiku 5.5 allows that at low effort).
+        // The live look-up skips thinking for speed (the fast model allows that at low effort).
         if live { body["thinking"] = ["type": "disabled"] }
 
         var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
