@@ -43,15 +43,17 @@ struct ProgressPage: View {
     }
 }
 
-/// The last 7 days as tappable pills (today at the start), plus a calendar for earlier days.
+/// The last 7 days as tappable pills (today at the far left), plus a calendar for earlier days.
 private struct WeekStrip: View {
     @Binding var day: Date
     @State private var picking = false
     private let calendar = Calendar.current
 
+    /// Oldest first: in the right-to-left layout that puts today at the far left and
+    /// earlier days to its right.
     private var days: [Date] {
         let today = calendar.startOfDay(for: Date())
-        return (0..<7).map { calendar.date(byAdding: .day, value: -$0, to: today)! }
+        return (0..<7).reversed().map { calendar.date(byAdding: .day, value: -$0, to: today)! }
     }
 
     var body: some View {

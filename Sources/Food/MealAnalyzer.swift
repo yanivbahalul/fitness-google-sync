@@ -117,6 +117,8 @@ enum MealAnalyzer {
     - confidence: "high" אם ברור מה זה וכמה, "medium" אם הכמות משוערת, "low" אם לא בטוח מה המאכל או שהוא מוסתר.
     כדי להעריך גודל השתמש בעצמים מוכרים בתמונה: צלחת רגילה כ‑26 ס"מ, מזלג כ‑19 ס"מ, כף כ‑15 מ"ל, כוס כ‑240 מ"ל, כף יד.
     העדף מנות ישראליות טיפוסיות כשאין רמז אחר. שמן, רטבים וממרחים שרואים בתמונה הם פריט נפרד.
+    משקאות (קפה, תה, מיץ, שייק, משקה בכוס) הם חלק מהארוחה: זהה אותם, למשל "קפה הפוך" עם כמות במ"ל לפי גודל הכוס.
+    לכל פריט חובה name_he לא ריק ו‑grams גדול מ‑0. פריט שאינך יכול לזהות אל תכלול.
     פרק מנה מורכבת לרכיביה העיקריים (למשל פיתה + פלאפל + חומוס). אל תכלול כלים, מפות או אריזות. אם אין אוכל, החזר רשימה ריקה.
     """
 
@@ -158,13 +160,14 @@ enum MealAnalyzer {
         "additionalProperties": false,
     ]
 
-    /// Analyzes a photo, a text description, or both.
-    static func analyze(image: UIImage?, text: String?) async throws -> [FoodDraft] {
+    /// Analyzes a photo, a text description, or both. `live` is the quick look while aiming
+    /// the camera: the fast model on a smaller frame, a single attempt.
+    static func analyze(image: UIImage?, text: String?, live: Bool = false) async throws -> [FoodDraft] {
         guard let key = AnthropicKeyStore.key else { throw MealAnalyzerError.noKey }
-        let model = MealModel.current
+        let model = live ? MealModel.haiku : MealModel.current
 
         var content: [[String: Any]] = []
-        if let image, let jpeg = resized(image, maxSide: 1568).jpegData(compressionQuality: 0.8) {
+        if let image, let jpeg = resized(image, maxSide: live ? 768 : 1568).jpegData(compressionQuality: live ? 0.6 : 0.8) {
             content.append([
                 "type": "image",
                 "source": ["type": "base64", "media_type": "image/jpeg", "data": jpeg.base64EncodedString()],
@@ -178,11 +181,11 @@ enum MealAnalyzer {
 
         var body: [String: Any] = [
             "model": model.rawValue,
-            "max_tokens": 16000,
+            "max_tokens": live ? 4000 : 16000,
             // Photos need a closer look (sizes, hidden items); a text description is quick.
             // Thinking stays on either way (it can't be disabled on these models).
             "output_config": [
-                "effort": image == nil ? "low" : "medium",
+                "effort": (live || image == nil) ? "low" : "medium",
                 "format": ["type": "json_schema", "schema": schema],
             ],
             "messages": [["role": "user", "content": content]],
@@ -191,7 +194,7 @@ enum MealAnalyzer {
 
         var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
         request.httpMethod = "POST"
-        request.timeoutInterval = 120
+        request.timeoutInterval = live ? 20 : 120
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(key, forHTTPHeaderField: "x-api-key")
         request.setValue("2026-10-21", forHTTPHeaderField: "anthropic-version")
@@ -200,7 +203,7 @@ enum MealAnalyzer {
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let data = try await send(request)
+        let data = try await send(request, attempts: live ? 1 : 3)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw MealAnalyzerError.badResponse("לא JSON")
         }
@@ -211,13 +214,24 @@ enum MealAnalyzer {
               let resultData = text.data(using: .utf8),
               let result = try? JSONDecoder().decode(Result.self, from: resultData)
         else {
+            #if DEBUG
+            print("MealAnalyzer: unreadable response:", String(data: data, encoding: .utf8) ?? "")
+            #endif
             if json["stop_reason"] as? String == "max_tokens" {
                 throw MealAnalyzerError.badResponse("התשובה נקטעה. נסה צילום עם פחות מאכלים.")
             }
             throw MealAnalyzerError.badResponse(json["stop_reason"] as? String ?? "ללא טקסט")
         }
 
-        return result.items.map { item in
+        // Drop empty items (no name, or no amount and no calories): they can't be logged and
+        // only made the screen show "1 g · 0 kcal".
+        let items = result.items.filter {
+            !$0.name_he.trimmingCharacters(in: .whitespaces).isEmpty && ($0.grams > 1 || $0.kcal_per_100g > 0)
+        }
+        #if DEBUG
+        if items.count != result.items.count { print("MealAnalyzer: dropped empty items:", text) }
+        #endif
+        return items.map { item in
             let candidates = candidates(for: item)
             return FoodDraft(label: item.name_he, food: bestMatch(in: candidates, estimate: item.kcal_per_100g),
                              grams: max(1, item.grams.rounded()),
@@ -260,7 +274,7 @@ enum MealAnalyzer {
     /// Sends the request, retrying temporary failures (rate limit, overloaded, server error,
     /// dropped connection) up to 3 times with growing waits, honoring `retry-after` and
     /// `x-should-retry`. Most "it didn't work" cases were a single 529/500 or a network blip.
-    private static func send(_ request: URLRequest) async throws -> Data {
+    private static func send(_ request: URLRequest, attempts: Int = 3) async throws -> Data {
         var attempt = 0
         while true {
             attempt += 1
@@ -268,7 +282,7 @@ enum MealAnalyzer {
             let response: URLResponse
             do {
                 (data, response) = try await URLSession.shared.data(for: request)
-            } catch let error as URLError where attempt < 3 && error.code != .cancelled {
+            } catch let error as URLError where attempt < attempts && error.code != .cancelled {
                 try await Task.sleep(nanoseconds: UInt64(attempt) * 2_000_000_000)
                 continue
             }
@@ -278,7 +292,7 @@ enum MealAnalyzer {
 
             let retryable = code == 408 || code == 409 || code == 429 || code >= 500
             let serverSaysNo = http?.value(forHTTPHeaderField: "x-should-retry") == "false"
-            guard retryable, !serverSaysNo, attempt < 3 else {
+            guard retryable, !serverSaysNo, attempt < attempts else {
                 throw MealAnalyzerError.http(code, String(data: data, encoding: .utf8) ?? "")
             }
             let wait = http?.value(forHTTPHeaderField: "retry-after").flatMap(Double.init) ?? Double(attempt * 2)

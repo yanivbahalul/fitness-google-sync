@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreImage
 import PhotosUI
 import SwiftUI
 import Vision
@@ -30,6 +31,22 @@ final class ScannerCamera: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     private var configured = false
     private var lastAnalysis = Date.distantPast
     private var onPhoto: ((UIImage) -> Void)?
+    private var latestFrame: CVPixelBuffer?
+    private let ciContext = CIContext()
+
+    /// The current camera frame as an image (for the live look-up), or nil.
+    func snapshot() async -> UIImage? {
+        await withCheckedContinuation { continuation in
+            queue.async {
+                guard let frame = self.latestFrame,
+                      let cg = self.ciContext.createCGImage(CIImage(cvPixelBuffer: frame),
+                                                            from: CGRect(x: 0, y: 0, width: CVPixelBufferGetWidth(frame),
+                                                                         height: CVPixelBufferGetHeight(frame)))
+                else { continuation.resume(returning: nil); return }
+                continuation.resume(returning: UIImage(cgImage: cg))
+            }
+        }
+    }
 
     func start() {
         AVCaptureDevice.requestAccess(for: .video) { granted in
@@ -75,6 +92,7 @@ final class ScannerCamera: NSObject, ObservableObject, AVCaptureVideoDataOutputS
         guard Date().timeIntervalSince(lastAnalysis) > 0.3,
               let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         lastAnalysis = Date()
+        latestFrame = pixels
         let size = CGSize(width: CVPixelBufferGetWidth(pixels), height: CVPixelBufferGetHeight(pixels))
         let request = VNGenerateObjectnessBasedSaliencyImageRequest()
         try? VNImageRequestHandler(cvPixelBuffer: pixels, orientation: .up).perform([request])
@@ -165,6 +183,21 @@ struct MealScannerView: View {
     @State private var typing = false
     @State private var typedText = ""
     @State private var reviewing = false
+    /// What the quick live look-up sees in the camera right now.
+    @State private var liveItems: [FoodDraft] = []
+    @State private var liveBusy = false
+    /// Foods added live (tapped while aiming), before any photo.
+    @State private var tray: [FoodDraft] = []
+    /// Labels flying from a tapped food down to the Continue button.
+    @State private var flyers: [Flyer] = []
+    @State private var trayBump = false
+
+    struct Flyer: Identifiable {
+        let id = UUID()
+        let text: String
+        let from: CGPoint
+        var arrived = false
+    }
 
     var body: some View {
         NavigationStack {
@@ -195,6 +228,7 @@ struct MealScannerView: View {
                     .navigationBarTitleDisplayMode(.inline)
             }
             .onAppear { camera.start() }
+            .task { await liveLoop() }
             .onDisappear { camera.stop() }
             .onChange(of: pickerItem) { item in
                 guard let item else { return }
@@ -221,6 +255,7 @@ struct MealScannerView: View {
     private var title: String {
         if analyzing { return "מזהה…" }
         if image != nil && analyzed { return drafts.contains(where: \.include) ? "הקש על מאכל כדי לבחור" : "לא זוהה אוכל" }
+        if !tray.isEmpty { return "נבחרו \(tray.count)" }
         return "כוון אל הצלחת"
     }
 
@@ -243,17 +278,45 @@ struct MealScannerView: View {
                     ForEach(Array(camera.boxes.enumerated()), id: \.offset) { _, box in
                         let r = place(box, image: camera.frameSize, in: geo.size, fill: true)
                         Brackets()
-                            .stroke(.white, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                            .stroke(.white.opacity(liveItems.isEmpty ? 1 : 0.4), style: StrokeStyle(lineWidth: 3, lineCap: .round))
                             .frame(width: r.width, height: r.height)
                             .position(x: r.midX, y: r.midY)
                             .animation(.easeOut(duration: 0.25), value: camera.boxes)
+                    }
+                    // Recognized foods: tap the label to add it, no photo needed.
+                    ForEach(liveItems) { item in
+                        if let box = item.box {
+                            let r = place(box, image: camera.frameSize, in: geo.size, fill: true)
+                            Brackets()
+                                .stroke(Theme.accent, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                                .frame(width: r.width, height: r.height)
+                                .position(x: r.midX, y: r.midY)
+                            let at = CGPoint(x: min(max(r.midX, 90), geo.size.width - 90), y: max(r.minY - 24, 70))
+                            liveChip(item, at: at, bottom: CGPoint(x: geo.size.width / 2, y: geo.size.height - 40))
+                                .position(at)
+                        }
+                    }
+                    // The "added" animation: the label shrinks and flies to Continue.
+                    ForEach(flyers) { f in
+                        Label(f.text, systemImage: "checkmark.circle.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 12)
+                            .frame(minHeight: DS.minTap)
+                            .background(Color.green, in: Capsule())
+                            .environment(\.layoutDirection, .rightToLeft)
+                            .fixedSize()
+                            .scaleEffect(f.arrived ? 0.35 : 1.1)
+                            .opacity(f.arrived ? 0 : 1)
+                            .position(f.arrived ? CGPoint(x: geo.size.width / 2, y: geo.size.height - 40) : f.from)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
                     }
                 }
                 .environment(\.layoutDirection, .leftToRight)
             }
             .ignoresSafeArea()
-            .accessibilityElement()
-            .accessibilityLabel("מצלמה. כוון אל הצלחת ולחץ על כפתור הצילום.")
+            .overlay(alignment: .top) { liveStatus }
         }
     }
 
@@ -281,6 +344,21 @@ struct MealScannerView: View {
 
     private var captureControls: some View {
         VStack(spacing: 12) {
+            let unplaced = liveItems.filter { $0.box == nil }
+            if !unplaced.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) { ForEach(unplaced) { liveChip($0, at: nil, bottom: nil) } }
+                }
+            }
+            if !tray.isEmpty {
+                let kcal = tray.map(\.kcal).reduce(0, +)
+                PrimaryButton(title: "המשך · \(tray.count) פריטים · \(Int(safe: kcal).formatted()) קק\"ל", symbol: "checkmark") {
+                    drafts = tray
+                    reviewing = true
+                }
+                .scaleEffect(trayBump ? 1.06 : 1)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
             HStack(spacing: 10) {
                 chip("ברקוד", symbol: "barcode.viewfinder") { onOther(.barcode) }
                 chip("חיפוש במאגר", symbol: "magnifyingglass") { onOther(.search) }
@@ -351,6 +429,80 @@ struct MealScannerView: View {
         }
     }
 
+    /// A recognized food while aiming: name, amount, calories; tap to add.
+    private func liveChip(_ item: FoodDraft, at point: CGPoint?, bottom: CGPoint?) -> some View {
+        let added = tray.contains { $0.label == item.label }
+        return Button {
+            guard !added else { return }
+            var copy = item
+            copy.id = UUID()
+            copy.box = nil
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) { tray.append(copy) }
+            if let point {
+                let flyer = Flyer(text: item.label, from: point)
+                flyers.append(flyer)
+                DispatchQueue.main.async {
+                    withAnimation(.easeIn(duration: 0.55)) {
+                        if let i = flyers.firstIndex(where: { $0.id == flyer.id }) { flyers[i].arrived = true }
+                    }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    flyers.removeAll { $0.id == flyer.id }
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.5)) { trayBump = true }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { trayBump = false }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: added ? "checkmark.circle.fill" : "plus.circle.fill")
+                Text("\(item.label) · \(Int(safe: item.grams)) ג׳ · \(Int(safe: item.kcal)) קק\"ל")
+                    .lineLimit(1)
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .frame(minHeight: DS.minTap)
+            .background(added ? Color.green : Theme.accent, in: Capsule())
+            .environment(\.layoutDirection, .rightToLeft)
+            .fixedSize()
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(added ? "\(item.label) נוסף" : "הוסף \(item.label), \(Int(safe: item.kcal)) קלוריות")
+    }
+
+    /// "Recognizing…" / what to do, at the top of the live view.
+    private var liveStatus: some View {
+        HStack(spacing: 6) {
+            if liveBusy { ProgressView().controlSize(.small).tint(.white) }
+            Text(liveItems.isEmpty ? (liveBusy ? "מזהה…" : "כוון אל האוכל") : "הקש על מאכל כדי להוסיף")
+        }
+        .font(.footnote.weight(.semibold))
+        .foregroundStyle(.white)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.black.opacity(0.5), in: Capsule())
+        .padding(.top, 8)
+    }
+
+    /// While aiming (no photo yet), look at the current frame every ~2.5 s with the fast
+    /// model and show what it recognizes, so foods can be added without taking a photo.
+    private func liveLoop() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            guard image == nil, !reviewing, !liveBusy, camera.authorized == true,
+                  !camera.boxes.isEmpty, AnthropicKeyStore.key != nil,
+                  let frame = await camera.snapshot() else { continue }
+            liveBusy = true
+            if let found = try? await MealAnalyzer.analyze(image: frame, text: nil, live: true), image == nil {
+                withAnimation(.easeOut(duration: 0.2)) { liveItems = found }
+            }
+            liveBusy = false
+        }
+    }
+
     private func sideLabel(_ title: String, symbol: String) -> some View {
         VStack(spacing: 4) {
             Image(systemName: symbol).font(.title2)
@@ -364,6 +516,7 @@ struct MealScannerView: View {
 
     private func use(_ photo: UIImage) {
         image = photo
+        liveItems = []
         camera.stop()
         Task { await analyze(typed: nil) }
     }
@@ -389,7 +542,7 @@ struct MealScannerView: View {
             if typedOnly && !drafts.isEmpty {
                 drafts += result
             } else {
-                drafts = result
+                drafts = tray + result
             }
             if result.isEmpty { error = typedOnly ? "גם מהתיאור לא זוהה אוכל. נסה לנסח אחרת." : nil }
             if image == nil, !drafts.isEmpty { reviewing = true }
