@@ -45,6 +45,65 @@ final class ScannerCamera: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     private var latestFrame: CVPixelBuffer?
     private let ciContext = CIContext()
 
+    /// Where each recognized food is now (fractions of the frame, top-left origin), kept
+    /// up to date frame by frame by Vision's object tracker, so labels follow the food as
+    /// the phone moves instead of jumping or staying behind.
+    @Published private(set) var tracked: [UUID: CGRect] = [:]
+    private var trackRequests: [UUID: VNTrackObjectRequest] = [:]   // queue only
+    private let sequence = VNSequenceRequestHandler()
+
+    /// Starts tracking these foods from the current frame (replaces earlier ones).
+    func track(_ boxes: [UUID: CGRect]) {
+        DispatchQueue.main.async { self.tracked = boxes }
+        queue.async {
+            self.trackRequests = boxes.mapValues { r in
+                let start = VNDetectedObjectObservation(boundingBox: CGRect(x: r.minX, y: 1 - r.maxY,
+                                                                           width: r.width, height: r.height))
+                let request = VNTrackObjectRequest(detectedObjectObservation: start)
+                request.trackingLevel = .fast
+                return request
+            }
+        }
+    }
+
+    func clearTracking() {
+        DispatchQueue.main.async { self.tracked = [:] }
+        queue.async { self.trackRequests = [:] }
+    }
+
+    /// Moves every tracked box to where the food is in this frame; drops lost ones.
+    private func updateTracking(_ pixels: CVPixelBuffer) {
+        guard !trackRequests.isEmpty else { return }
+        let ids = Array(trackRequests.keys)
+        let requests = ids.compactMap { trackRequests[$0] }
+        try? sequence.perform(requests, on: pixels, orientation: .up)
+        var moved: [UUID: CGRect] = [:]
+        for (id, request) in zip(ids, requests) {
+            guard let result = request.results?.first as? VNDetectedObjectObservation, result.confidence > 0.3 else {
+                trackRequests[id] = nil
+                continue
+            }
+            request.inputObservation = result
+            let b = result.boundingBox
+            moved[id] = CGRect(x: b.minX, y: 1 - b.maxY, width: b.width, height: b.height)
+        }
+        DispatchQueue.main.async {
+            // Light smoothing so the frames glide instead of trembling.
+            var next: [UUID: CGRect] = [:]
+            for (id, r) in moved {
+                if let old = self.tracked[id] {
+                    let k: CGFloat = 0.55
+                    next[id] = CGRect(x: old.minX + (r.minX - old.minX) * k, y: old.minY + (r.minY - old.minY) * k,
+                                      width: old.width + (r.width - old.width) * k,
+                                      height: old.height + (r.height - old.height) * k)
+                } else {
+                    next[id] = r
+                }
+            }
+            self.tracked = next
+        }
+    }
+
     /// The current camera frame as an image (for the live look-up), or nil.
     func snapshot() async -> UIImage? {
         await withCheckedContinuation { continuation in
@@ -127,10 +186,11 @@ final class ScannerCamera: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     // Live frames: find distinct objects a few times a second (on-device, no network).
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
-        guard Date().timeIntervalSince(lastAnalysis) > 0.3,
-              let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        lastAnalysis = Date()
+        guard let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         latestFrame = pixels
+        updateTracking(pixels)
+        guard Date().timeIntervalSince(lastAnalysis) > 0.3 else { return }
+        lastAnalysis = Date()
         let size = CGSize(width: CVPixelBufferGetWidth(pixels), height: CVPixelBufferGetHeight(pixels))
         let request = VNGenerateObjectnessBasedSaliencyImageRequest()
         try? VNImageRequestHandler(cvPixelBuffer: pixels, orientation: .up).perform([request])
@@ -268,8 +328,9 @@ struct MealScannerView: View {
             .onAppear { camera.start() }
             .task { await liveLoop() }
             // Moving the phone clears the labels at once, so no frame is left over a wrong spot.
-            .onChange(of: camera.moving) { moving in
-                if moving { withAnimation(.easeOut(duration: 0.15)) { liveItems = [] } }
+            .onChange(of: camera.tracked.isEmpty) { empty in
+                // Every food left the view: forget them so the next look starts fresh.
+                if empty, !liveItems.isEmpty { withAnimation(.easeOut(duration: 0.15)) { liveItems = [] } }
             }
             .onDisappear { camera.stop() }
             .onChange(of: pickerItem) { item in
@@ -317,17 +378,21 @@ struct MealScannerView: View {
             GeometryReader { geo in
                 ZStack {
                     CameraPreview(session: camera.session)
-                    ForEach(Array(camera.boxes.enumerated()), id: \.offset) { _, box in
-                        let r = place(box, image: camera.frameSize, in: geo.size, fill: true)
+                    // A steady aiming frame in the middle while nothing is recognized yet.
+                    if camera.tracked.isEmpty {
+                        let side = min(geo.size.width, geo.size.height) * 0.62
                         Brackets()
-                            .stroke(.white.opacity(liveItems.isEmpty ? 1 : 0.4), style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                            .frame(width: r.width, height: r.height)
-                            .position(x: r.midX, y: r.midY)
-                            .animation(.easeOut(duration: 0.25), value: camera.boxes)
+                            .stroke(.white.opacity(liveBusy ? 1 : 0.7), style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                            .frame(width: side, height: side)
+                            .scaleEffect(liveBusy ? 0.96 : 1)
+                            .animation(liveBusy ? .easeInOut(duration: 0.6).repeatForever(autoreverses: true) : .default,
+                                       value: liveBusy)
+                            .position(x: geo.size.width / 2, y: geo.size.height * 0.45)
+                            .allowsHitTesting(false)
                     }
-                    // Recognized foods: tap the label to add it, no photo needed.
+                    // Recognized foods follow the food on screen; tap the label to add it.
                     ForEach(liveItems) { item in
-                        if let box = item.box {
+                        if let box = camera.tracked[item.id] {
                             let r = place(box, image: camera.frameSize, in: geo.size, fill: true)
                             Brackets()
                                 .stroke(Theme.accent, style: StrokeStyle(lineWidth: 3, lineCap: .round))
@@ -539,7 +604,7 @@ struct MealScannerView: View {
             // seconds while it stays still. Never while moving: the frames would be stale.
             guard image == nil, !reviewing, !liveBusy, camera.authorized == true, !camera.moving,
                   Date().timeIntervalSince(camera.stillSince) > 0.35,
-                  liveItems.isEmpty || Date().timeIntervalSince(lastLook) > 4,
+                  liveItems.isEmpty || camera.tracked.isEmpty || Date().timeIntervalSince(lastLook) > 6,
                   !camera.boxes.isEmpty, AnthropicKeyStore.key != nil else { continue }
             let view = camera.moveCount
             guard let frame = await camera.snapshot() else { continue }
@@ -549,7 +614,9 @@ struct MealScannerView: View {
             liveBusy = false
             // Drop the answer if the phone moved meanwhile: it describes the old view.
             guard let found, image == nil, camera.moveCount == view, !camera.moving else { continue }
+            let placed = found.filter { $0.box != nil }
             withAnimation(.easeOut(duration: 0.2)) { liveItems = found }
+            camera.track(Dictionary(uniqueKeysWithValues: placed.map { ($0.id, $0.box!) }))
         }
     }
 
@@ -567,6 +634,7 @@ struct MealScannerView: View {
     private func use(_ photo: UIImage) {
         image = photo
         liveItems = []
+        camera.clearTracking()
         camera.stop()
         Task { await analyze(typed: nil) }
     }
