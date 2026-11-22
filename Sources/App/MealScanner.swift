@@ -1,240 +1,206 @@
+import ARKit
 import AVFoundation
 import CoreImage
-import CoreMotion
 import PhotosUI
+import RealityKit
 import SwiftUI
-import Vision
 
 // Live meal scanner.
 //
-// While aiming, Apple's on-device Vision marks the distinct objects it sees (plates,
-// cups, items) with frames in real time, so it's clear what's in view. After the shutter,
-// Claude identifies each food and where it is, and the photo comes back with a labelled
-// frame on every food (name, amount, calories). Tap a frame to include or skip it; if
-// something wasn't recognized, type it.
+// While aiming, the current camera frame is sent to the fast model whenever the phone is
+// still and the middle of the view isn't known yet. Each recognized food is anchored to
+// its real place in the room with ARKit world tracking, so its label stays on the food
+// while the phone moves, reappears at once when you come back to it, and is never asked
+// about again in this session. While a look is in progress, its spot shows "processing"
+// and waits there for the answer. The shutter takes a full photo for a precise analysis.
 
-// MARK: - Camera
+// MARK: - AR camera
 
-/// Camera session: live preview, on-device object frames, and still capture.
-///
-/// `@unchecked Sendable`: the capture state is only touched on `queue`, and the published
-/// values only on the main queue, so the closures that hop between them are safe.
-final class ScannerCamera: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate,
-                           AVCapturePhotoCaptureDelegate, @unchecked Sendable {
-    let session = AVCaptureSession()
-    /// Objects in view: fractions of the frame, top-left origin, portrait.
-    @Published var boxes: [CGRect] = []
-    /// Size of the live frames (portrait), for placing the frames on screen.
-    @Published var frameSize = CGSize(width: 1080, height: 1920)
+/// ARKit session with world-anchored spots for recognized foods.
+final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked Sendable {
+    /// A place in the room: four corners and a center, in world coordinates (meters).
+    struct Spot {
+        var corners: [SIMD3<Float>]
+        var center: SIMD3<Float>
+    }
+
     /// nil until the user answered the camera permission prompt.
     @Published var authorized: Bool?
-    /// The phone is moving (from the motion sensors); live labels are cleared while it moves.
+    /// Where each spot is on screen now (view points); missing = out of view.
+    @Published private(set) var onScreen: [UUID: CGRect] = [:]
+    /// The phone is moving (from ARKit's camera pose).
     @Published private(set) var moving = false
     /// When the phone last stopped moving.
     private(set) var stillSince = Date()
-    /// Goes up every time the phone starts moving, to discard answers for an old view.
-    private(set) var moveCount = 0
-    private let motion = CMMotionManager()
 
-    private let photoOutput = AVCapturePhotoOutput()
-    private let videoOutput = AVCaptureVideoDataOutput()
-    private let queue = DispatchQueue(label: "healthbridge.scanner")
-    private var configured = false
-    private var lastAnalysis = Date.distantPast
-    private var onPhoto: ((UIImage) -> Void)?
-    private var latestFrame: CVPixelBuffer?
+    private weak var view: ARView?
+    private var spots: [UUID: Spot] = [:]
+    private var lastPose: simd_float4x4?
+    private var lastMove = Date.distantPast
+    private var lastProjection: TimeInterval = 0
+    private var running = false
     private let ciContext = CIContext()
 
-    /// Where each recognized food is now (fractions of the frame, top-left origin), kept
-    /// up to date frame by frame by Vision's object tracker, so labels follow the food as
-    /// the phone moves instead of jumping or staying behind.
-    @Published private(set) var tracked: [UUID: CGRect] = [:]
-    private var trackRequests: [UUID: VNTrackObjectRequest] = [:]   // queue only
-    private let sequence = VNSequenceRequestHandler()
-
-    /// Starts tracking these foods from the current frame (replaces earlier ones).
-    func track(_ boxes: [UUID: CGRect]) {
-        DispatchQueue.main.async { self.tracked = boxes }
-        queue.async {
-            self.trackRequests = boxes.mapValues { r in
-                let start = VNDetectedObjectObservation(boundingBox: CGRect(x: r.minX, y: 1 - r.maxY,
-                                                                           width: r.width, height: r.height))
-                let request = VNTrackObjectRequest(detectedObjectObservation: start)
-                request.trackingLevel = .fast
-                return request
-            }
-        }
-    }
-
-    func clearTracking() {
-        DispatchQueue.main.async { self.tracked = [:] }
-        queue.async { self.trackRequests = [:] }
-    }
-
-    /// Moves every tracked box to where the food is in this frame; drops lost ones.
-    private func updateTracking(_ pixels: CVPixelBuffer) {
-        guard !trackRequests.isEmpty else { return }
-        let ids = Array(trackRequests.keys)
-        let requests = ids.compactMap { trackRequests[$0] }
-        try? sequence.perform(requests, on: pixels, orientation: .up)
-        var moved: [UUID: CGRect] = [:]
-        for (id, request) in zip(ids, requests) {
-            guard let result = request.results?.first as? VNDetectedObjectObservation, result.confidence > 0.3 else {
-                trackRequests[id] = nil
-                continue
-            }
-            request.inputObservation = result
-            let b = result.boundingBox
-            moved[id] = CGRect(x: b.minX, y: 1 - b.maxY, width: b.width, height: b.height)
-        }
-        DispatchQueue.main.async {
-            // Light smoothing so the frames glide instead of trembling.
-            var next: [UUID: CGRect] = [:]
-            for (id, r) in moved {
-                if let old = self.tracked[id] {
-                    let k: CGFloat = 0.55
-                    next[id] = CGRect(x: old.minX + (r.minX - old.minX) * k, y: old.minY + (r.minY - old.minY) * k,
-                                      width: old.width + (r.width - old.width) * k,
-                                      height: old.height + (r.height - old.height) * k)
-                } else {
-                    next[id] = r
-                }
-            }
-            self.tracked = next
-        }
-    }
-
-    /// The current camera frame as an image (for the live look-up), or nil.
-    func snapshot() async -> UIImage? {
-        await withCheckedContinuation { continuation in
-            queue.async {
-                guard let frame = self.latestFrame else { continuation.resume(returning: nil); return }
-                // Scale down before converting: the live look-up only needs ~512 px.
-                let full = CIImage(cvPixelBuffer: frame)
-                let scale = min(1, 512 / max(full.extent.width, full.extent.height))
-                let small = full.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-                guard let cg = self.ciContext.createCGImage(small, from: small.extent) else {
-                    continuation.resume(returning: nil); return
-                }
-                continuation.resume(returning: UIImage(cgImage: cg))
-            }
-        }
+    func attach(_ view: ARView) {
+        self.view = view
+        view.session.delegate = self
+        runIfReady()
     }
 
     func start() {
-        startMotion()
         AVCaptureDevice.requestAccess(for: .video) { granted in
-            DispatchQueue.main.async { self.authorized = granted }
-            guard granted else { return }
-            self.queue.async {
-                self.configureIfNeeded()
-                if !self.session.isRunning { self.session.startRunning() }
+            DispatchQueue.main.async {
+                self.authorized = granted
+                self.runIfReady()
             }
         }
     }
 
     func stop() {
-        motion.stopDeviceMotionUpdates()
-        queue.async { if self.session.isRunning { self.session.stopRunning() } }
+        view?.session.pause()
+        running = false
     }
 
-    /// Watches rotation and shake: a turn of more than ~20°/s or a push counts as moving,
-    /// and the view is considered still again after 0.4 s of calm.
-    private func startMotion() {
-        guard motion.isDeviceMotionAvailable, !motion.isDeviceMotionActive else { return }
-        motion.deviceMotionUpdateInterval = 1.0 / 20
-        var lastMove = Date.distantPast
-        motion.startDeviceMotionUpdates(to: .main) { [weak self] data, _ in
-            guard let self, let data else { return }
-            let r = data.rotationRate, a = data.userAcceleration
-            let rotating = (r.x * r.x + r.y * r.y + r.z * r.z).squareRoot() > 0.35
-            let pushed = (a.x * a.x + a.y * a.y + a.z * a.z).squareRoot() > 0.08
-            let now = Date()
-            if rotating || pushed {
-                lastMove = now
-                if !self.moving { self.moving = true; self.moveCount += 1 }
-            } else if self.moving, now.timeIntervalSince(lastMove) > 0.4 {
-                self.moving = false
-                self.stillSince = now
+    private func runIfReady() {
+        guard authorized == true, !running, let view, ARWorldTrackingConfiguration.isSupported else { return }
+        let config = ARWorldTrackingConfiguration()
+        config.planeDetection = [.horizontal, .vertical]
+        view.session.run(config)
+        running = true
+    }
+
+    // MARK: Spots
+
+    func set(_ id: UUID, _ spot: Spot) { spots[id] = spot }
+
+    func remove(_ id: UUID) {
+        spots[id] = nil
+        onScreen[id] = nil
+    }
+
+    func center(of id: UUID) -> SIMD3<Float>? { spots[id]?.center }
+
+    /// True when a known spot sits in the middle of the view: that area was already
+    /// looked at (or is being looked at), so there's no need to ask again.
+    func middleIsKnown() -> Bool {
+        guard let view else { return false }
+        let b = view.bounds
+        let middle = CGRect(x: b.width * 0.2, y: b.height * 0.15, width: b.width * 0.6, height: b.height * 0.55)
+        return onScreen.values.contains { middle.contains(CGPoint(x: $0.midX, y: $0.midY)) }
+    }
+
+    /// Anchors a box from a frame (fractions of the portrait image, top-left origin) to the
+    /// room: the center hits the nearest surface, the corners sit at the same distance.
+    func anchor(_ box: CGRect, from frame: ARFrame) -> Spot? {
+        guard let session = view?.session else { return nil }
+        // Portrait image fractions → the camera image's own (landscape) fractions.
+        func imagePoint(_ u: CGFloat, _ v: CGFloat) -> CGPoint { CGPoint(x: v, y: 1 - u) }
+        let query = frame.raycastQuery(from: imagePoint(box.midX, box.midY), allowing: .estimatedPlane, alignment: .any)
+        let direction = simd_normalize(query.direction)
+        let center: SIMD3<Float>
+        if let hit = session.raycast(query).first {
+            let p = hit.worldTransform.columns.3
+            center = SIMD3(p.x, p.y, p.z)
+        } else {
+            center = query.origin + direction * 0.45
+        }
+        let distance = simd_distance(center, query.origin)
+        let corners = [(box.minX, box.minY), (box.maxX, box.minY), (box.minX, box.maxY), (box.maxX, box.maxY)]
+            .map { (u, v) -> SIMD3<Float> in
+                let q = frame.raycastQuery(from: imagePoint(u, v), allowing: .estimatedPlane, alignment: .any)
+                return q.origin + simd_normalize(q.direction) * distance
             }
+        return Spot(corners: corners, center: center)
+    }
+
+    // MARK: Frames
+
+    func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        let pose = frame.camera.transform
+        if let last = lastPose {
+            let moved = simd_distance(SIMD3(pose.columns.3.x, pose.columns.3.y, pose.columns.3.z),
+                                      SIMD3(last.columns.3.x, last.columns.3.y, last.columns.3.z))
+            let f1 = simd_normalize(SIMD3(pose.columns.2.x, pose.columns.2.y, pose.columns.2.z))
+            let f0 = simd_normalize(SIMD3(last.columns.2.x, last.columns.2.y, last.columns.2.z))
+            let turned = acos(min(1, max(-1, simd_dot(f1, f0))))
+            let now = Date()
+            if moved > 0.002 || turned > 0.005 {
+                lastMove = now
+                if !moving { moving = true }
+            } else if moving, now.timeIntervalSince(lastMove) > 0.3 {
+                moving = false
+                stillSince = now
+            }
+        }
+        lastPose = pose
+        // Place the spots on screen ~30 times a second.
+        if frame.timestamp - lastProjection > 1.0 / 30 {
+            lastProjection = frame.timestamp
+            project(frame)
         }
     }
 
-    private func configureIfNeeded() {
-        guard !configured else { return }
-        configured = true
-        session.beginConfiguration()
-        session.sessionPreset = .photo
-        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
-              let input = try? AVCaptureDeviceInput(device: device), session.canAddInput(input) else {
-            session.commitConfiguration()
+    private func project(_ frame: ARFrame) {
+        guard let view, !spots.isEmpty else {
+            if !onScreen.isEmpty { onScreen = [:] }
             return
         }
-        session.addInput(input)
-        if session.canAddOutput(photoOutput) { session.addOutput(photoOutput) }
-        videoOutput.alwaysDiscardsLateVideoFrames = true
-        videoOutput.setSampleBufferDelegate(self, queue: queue)
-        if session.canAddOutput(videoOutput) { session.addOutput(videoOutput) }
-        for output in [videoOutput, photoOutput] as [AVCaptureOutput] {
-            if let connection = output.connection(with: .video), connection.isVideoOrientationSupported {
-                connection.videoOrientation = .portrait
-            }
+        let toCamera = frame.camera.transform.inverse
+        func inFront(_ p: SIMD3<Float>) -> Bool { (toCamera * SIMD4(p.x, p.y, p.z, 1)).z < -0.05 }
+        var next: [UUID: CGRect] = [:]
+        for (id, spot) in spots where inFront(spot.center) {
+            let points = spot.corners.filter(inFront).compactMap { view.project($0) }
+            guard points.count >= 2 else { continue }
+            let xs = points.map(\.x), ys = points.map(\.y)
+            var rect = CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
+            rect = rect.insetBy(dx: min(0, (rect.width - 56) / 2), dy: min(0, (rect.height - 56) / 2))
+            guard rect.intersects(view.bounds) else { continue }
+            next[id] = rect
         }
-        session.commitConfiguration()
+        onScreen = next
     }
 
-    // Live frames: find distinct objects a few times a second (on-device, no network).
-    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
-                       from connection: AVCaptureConnection) {
-        guard let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        latestFrame = pixels
-        updateTracking(pixels)
-        guard Date().timeIntervalSince(lastAnalysis) > 0.3 else { return }
-        lastAnalysis = Date()
-        let size = CGSize(width: CVPixelBufferGetWidth(pixels), height: CVPixelBufferGetHeight(pixels))
-        let request = VNGenerateObjectnessBasedSaliencyImageRequest()
-        try? VNImageRequestHandler(cvPixelBuffer: pixels, orientation: .up).perform([request])
-        let found = (request.results?.first?.salientObjects ?? [])
-            .filter { $0.confidence > 0.3 && $0.boundingBox.width > 0.08 && $0.boundingBox.height > 0.05 }
-            .map { o in CGRect(x: o.boundingBox.minX, y: 1 - o.boundingBox.maxY,
-                               width: o.boundingBox.width, height: o.boundingBox.height) }
-        DispatchQueue.main.async {
-            self.frameSize = size
-            self.boxes = found
-        }
+    // MARK: Images
+
+    /// The current frame as a small portrait image for the live look-up, with the frame
+    /// itself (its camera pose anchors the answer to the room).
+    func snapshot() -> (UIImage, ARFrame)? {
+        guard let frame = view?.session.currentFrame, let image = image(from: frame.capturedImage, maxSide: 512) else { return nil }
+        return (image, frame)
     }
 
+    /// A full photo (the highest resolution ARKit offers).
     func capture(_ done: @escaping (UIImage) -> Void) {
-        onPhoto = done
-        photoOutput.capturePhoto(with: AVCapturePhotoSettings(), delegate: self)
+        guard let session = view?.session else { return }
+        session.captureHighResolutionFrame { frame, _ in
+            guard let pixels = (frame ?? session.currentFrame)?.capturedImage,
+                  let image = self.image(from: pixels, maxSide: nil) else { return }
+            DispatchQueue.main.async { done(image) }
+        }
     }
 
-    func photoOutput(_ output: AVCapturePhotoOutput, didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
-        guard let data = photo.fileDataRepresentation(), let image = UIImage(data: data) else { return }
-        DispatchQueue.main.async {
-            self.onPhoto?(image)
-            self.onPhoto = nil
+    private func image(from pixels: CVPixelBuffer, maxSide: CGFloat?) -> UIImage? {
+        var ci = CIImage(cvPixelBuffer: pixels).oriented(.right)
+        if let maxSide {
+            let scale = min(1, maxSide / max(ci.extent.width, ci.extent.height))
+            ci = ci.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         }
+        guard let cg = ciContext.createCGImage(ci, from: ci.extent) else { return nil }
+        return UIImage(cgImage: cg)
     }
 }
 
-/// The live camera image.
-private struct CameraPreview: UIViewRepresentable {
-    let session: AVCaptureSession
+/// The live AR camera image.
+private struct ARCameraView: UIViewRepresentable {
+    let scanner: ARScanner
 
-    final class PreviewView: UIView {
-        override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
-        var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
-    }
-
-    func makeUIView(context: Context) -> PreviewView {
-        let view = PreviewView()
-        view.previewLayer.session = session
-        view.previewLayer.videoGravity = .resizeAspectFill
+    func makeUIView(context: Context) -> ARView {
+        let view = ARView(frame: .zero, cameraMode: .ar, automaticallyConfigureSession: false)
+        scanner.attach(view)
         return view
     }
 
-    func updateUIView(_ uiView: PreviewView, context: Context) {}
+    func updateUIView(_ uiView: ARView, context: Context) {}
 }
 
 /// Places a fraction-of-image rectangle on screen for an image drawn aspect-fill or aspect-fit.
@@ -271,7 +237,7 @@ struct MealScannerView: View {
     /// Search or barcode chosen here; the parent opens it after the scanner closes.
     let onOther: (AddMode) -> Void
     @Environment(\.dismiss) private var dismiss
-    @StateObject private var camera = ScannerCamera()
+    @StateObject private var camera = ARScanner()
     @State private var image: UIImage?
     @State private var drafts: [FoodDraft] = []
     @State private var analyzing = false
@@ -286,6 +252,8 @@ struct MealScannerView: View {
     @State private var liveBusy = false
     /// Foods added live (tapped while aiming), before any photo.
     @State private var tray: [FoodDraft] = []
+    /// Spots with a look still in progress ("processing" waits there).
+    @State private var pending: Set<UUID> = []
     /// Labels flying from a tapped food down to the Continue button.
     @State private var flyers: [Flyer] = []
     @State private var trayBump = false
@@ -327,11 +295,6 @@ struct MealScannerView: View {
             }
             .onAppear { camera.start() }
             .task { await liveLoop() }
-            // Moving the phone clears the labels at once, so no frame is left over a wrong spot.
-            .onChange(of: camera.tracked.isEmpty) { empty in
-                // Every food left the view: forget them so the next look starts fresh.
-                if empty, !liveItems.isEmpty { withAnimation(.easeOut(duration: 0.15)) { liveItems = [] } }
-            }
             .onDisappear { camera.stop() }
             .onChange(of: pickerItem) { item in
                 guard let item else { return }
@@ -377,27 +340,33 @@ struct MealScannerView: View {
         default:
             GeometryReader { geo in
                 ZStack {
-                    CameraPreview(session: camera.session)
-                    // A steady aiming frame in the middle while nothing is recognized yet.
-                    if camera.tracked.isEmpty {
+                    ARCameraView(scanner: camera)
+                    // A steady aiming frame in the middle while nothing known is in view.
+                    if camera.onScreen.isEmpty {
                         let side = min(geo.size.width, geo.size.height) * 0.62
                         Brackets()
-                            .stroke(.white.opacity(liveBusy ? 1 : 0.7), style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                            .stroke(.white.opacity(0.75), style: StrokeStyle(lineWidth: 4, lineCap: .round))
                             .frame(width: side, height: side)
-                            .scaleEffect(liveBusy ? 0.96 : 1)
-                            .animation(liveBusy ? .easeInOut(duration: 0.6).repeatForever(autoreverses: true) : .default,
-                                       value: liveBusy)
                             .position(x: geo.size.width / 2, y: geo.size.height * 0.45)
                             .allowsHitTesting(false)
                     }
-                    // Recognized foods follow the food on screen; tap the label to add it.
+                    // A look in progress waits at its spot until the answer arrives.
+                    ForEach(Array(pending), id: \.self) { id in
+                        if let r = camera.onScreen[id] {
+                            ProcessingSpot()
+                                .frame(width: r.width, height: r.height)
+                                .position(x: r.midX, y: r.midY)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    // Recognized foods stay on the food (anchored in the room); tap to add.
                     ForEach(liveItems) { item in
-                        if let box = camera.tracked[item.id] {
-                            let r = place(box, image: camera.frameSize, in: geo.size, fill: true)
+                        if let r = camera.onScreen[item.id] {
                             Brackets()
                                 .stroke(Theme.accent, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                                 .frame(width: r.width, height: r.height)
                                 .position(x: r.midX, y: r.midY)
+                                .allowsHitTesting(false)
                             let at = CGPoint(x: min(max(r.midX, 90), geo.size.width - 90), y: max(r.minY - 24, 70))
                             liveChip(item, at: at, bottom: CGPoint(x: geo.size.width / 2, y: geo.size.height - 40))
                                 .position(at)
@@ -451,7 +420,7 @@ struct MealScannerView: View {
 
     private var captureControls: some View {
         VStack(spacing: 12) {
-            let unplaced = liveItems.filter { $0.box == nil }
+            let unplaced = liveItems.filter { camera.center(of: $0.id) == nil }
             if !unplaced.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) { ForEach(unplaced) { liveChip($0, at: nil, bottom: nil) } }
@@ -584,7 +553,7 @@ struct MealScannerView: View {
     private var liveStatus: some View {
         HStack(spacing: 6) {
             if liveBusy { ProgressView().controlSize(.small).tint(.white) }
-            Text(liveItems.isEmpty ? (liveBusy ? "מזהה…" : "כוון אל האוכל") : "הקש על מאכל כדי להוסיף")
+            Text(liveBusy ? "מזהה…" : (liveItems.isEmpty ? "כוון אל האוכל והחזק רגע" : "הקש על מאכל כדי להוסיף"))
         }
         .font(.footnote.weight(.semibold))
         .foregroundStyle(.white)
@@ -594,29 +563,54 @@ struct MealScannerView: View {
         .padding(.top, 8)
     }
 
-    /// While aiming (no photo yet), look at the current frame every ~2.5 s with the fast
-    /// model and show what it recognizes, so foods can be added without taking a photo.
+    /// While aiming (no photo yet): whenever the phone is still and the middle of the view
+    /// isn't known yet, look at the frame with the fast model. Answers are anchored to the
+    /// room from the frame they were taken from, so moving meanwhile doesn't matter.
     private func liveLoop() async {
-        var lastLook = Date.distantPast
         while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            // Look as soon as the phone has been still for a moment; refresh every few
-            // seconds while it stays still. Never while moving: the frames would be stale.
+            try? await Task.sleep(nanoseconds: 200_000_000)
             guard image == nil, !reviewing, !liveBusy, camera.authorized == true, !camera.moving,
-                  Date().timeIntervalSince(camera.stillSince) > 0.35,
-                  liveItems.isEmpty || camera.tracked.isEmpty || Date().timeIntervalSince(lastLook) > 6,
-                  !camera.boxes.isEmpty, AnthropicKeyStore.key != nil else { continue }
-            let view = camera.moveCount
-            guard let frame = await camera.snapshot() else { continue }
+                  Date().timeIntervalSince(camera.stillSince) > 0.3, !camera.middleIsKnown(),
+                  AnthropicKeyStore.key != nil, let snap = camera.snapshot() else { continue }
+            let (frame, arFrame) = snap
+
+            // Mark the spot being looked at: it shows "processing" and isn't asked again.
+            let lookID = UUID()
+            if let spot = camera.anchor(CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.35), from: arFrame) {
+                camera.set(lookID, spot)
+                pending.insert(lookID)
+            }
             liveBusy = true
-            lastLook = Date()
-            let found = try? await MealAnalyzer.analyze(image: frame, text: nil, live: true)
+            let found = (try? await MealAnalyzer.analyze(image: frame, text: nil, live: true)) ?? []
             liveBusy = false
-            // Drop the answer if the phone moved meanwhile: it describes the old view.
-            guard let found, image == nil, camera.moveCount == view, !camera.moving else { continue }
-            let placed = found.filter { $0.box != nil }
-            withAnimation(.easeOut(duration: 0.2)) { liveItems = found }
-            camera.track(Dictionary(uniqueKeysWithValues: placed.map { ($0.id, $0.box!) }))
+            pending.remove(lookID)
+            guard image == nil else { camera.remove(lookID); continue }
+
+            var added = false
+            for item in found {
+                if let box = item.box, let spot = camera.anchor(box, from: arFrame) {
+                    // The same food already found nearby: keep the first one.
+                    let duplicate = liveItems.contains { known in
+                        known.label == item.label && (camera.center(of: known.id).map { simd_distance($0, spot.center) < 0.2 } ?? false)
+                    }
+                    guard !duplicate else { continue }
+                    camera.set(item.id, spot)
+                    withAnimation(.easeOut(duration: 0.25)) { liveItems.append(item) }
+                    added = true
+                } else if item.box == nil, !liveItems.contains(where: { $0.label == item.label }) {
+                    withAnimation(.easeOut(duration: 0.25)) { liveItems.append(item) }
+                }
+            }
+            if added {
+                camera.remove(lookID)
+            } else {
+                // Nothing there: remember the empty spot for a while so it isn't asked again
+                // right away, then let it be looked at again (food may be put down later).
+                Task {
+                    try? await Task.sleep(nanoseconds: 8_000_000_000)
+                    camera.remove(lookID)
+                }
+            }
         }
     }
 
@@ -633,8 +627,6 @@ struct MealScannerView: View {
 
     private func use(_ photo: UIImage) {
         image = photo
-        liveItems = []
-        camera.clearTracking()
         camera.stop()
         Task { await analyze(typed: nil) }
     }
@@ -760,6 +752,32 @@ private struct ResultCanvas: View {
                 .padding(.horizontal, DS.pagePadding)
             }
             .padding(.bottom, 8)
+        }
+    }
+}
+
+/// A spot still being recognized: pulsing frame with "processing".
+private struct ProcessingSpot: View {
+    @State private var pulse = false
+
+    var body: some View {
+        ZStack {
+            Brackets()
+                .stroke(.white, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .opacity(pulse ? 1 : 0.45)
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small).tint(.white)
+                Text("מעבד…")
+            }
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.black.opacity(0.55), in: Capsule())
+            .environment(\.layoutDirection, .rightToLeft)
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) { pulse = true }
         }
     }
 }
