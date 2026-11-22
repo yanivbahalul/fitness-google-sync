@@ -180,13 +180,13 @@ struct ActivityPage: View {
         .task { await model.refresh() }
         .task(id: sync.lastSyncDate) { burnedToday = await sync.burned(on: Date()) }
         .refreshable { await model.refresh() }
-        .onChange(of: model.range) { _ in Task { await model.refresh() } }
-        .onChange(of: sync.lastSyncDate) { _ in Task { await model.refresh() } }
-        .onChange(of: allSources) { _ in Task { await model.refresh() } }
+        .onChange(of: model.range) { Task { await model.refresh() } }
+        .onChange(of: sync.lastSyncDate) { Task { await model.refresh() } }
+        .onChange(of: allSources) { Task { await model.refresh() } }
         // A sync from a Shortcut or in the background happens while this screen isn't
         // visible (and Apple Health can't be read while the phone is locked), so reload
         // whenever the app comes back.
-        .onChange(of: scenePhase) { phase in
+        .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
             Task {
                 await model.refresh()

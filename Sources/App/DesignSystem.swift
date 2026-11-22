@@ -239,7 +239,8 @@ struct SelectionOverlay: View {
             Rectangle().fill(.clear).contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 0)
                     .onChanged { value in
-                        let origin = geo[proxy.plotAreaFrame].origin
+                        guard let plot = proxy.plotFrame else { return }
+                        let origin = geo[plot].origin
                         if let date: Date = proxy.value(atX: value.location.x - origin.x) { onSelect(date) }
                     }
                     .onEnded { _ in onEnd() })

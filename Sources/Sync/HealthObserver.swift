@@ -8,7 +8,7 @@ import UIKit
 @MainActor
 enum HealthObserver {
     private static let store = HKHealthStore()
-    private static let anchorKey = "healthObserverAnchor"
+    nonisolated private static let anchorKey = "healthObserverAnchor"
     private static var query: HKObserverQuery?
 
     /// Call at every launch: iOS relaunches the app in the background for these updates and

@@ -96,11 +96,21 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
 
     /// True when a known spot sits in the middle of the view: that area was already
     /// looked at (or is being looked at), so there's no need to ask again.
+    /// Projects the spots directly rather than using `onScreen`, which only updates on the
+    /// next camera frame: a food just placed from memory must already count, or a second
+    /// look would start on top of it.
     func middleIsKnown() -> Bool {
         guard let view else { return false }
         let b = view.bounds
         let middle = CGRect(x: b.width * 0.2, y: b.height * 0.15, width: b.width * 0.6, height: b.height * 0.55)
-        return onScreen.values.contains { middle.contains(CGPoint(x: $0.midX, y: $0.midY)) }
+        if onScreen.values.contains(where: { middle.contains(CGPoint(x: $0.midX, y: $0.midY)) }) { return true }
+        guard let camera = view.session.currentFrame?.camera else { return false }
+        let toCamera = camera.transform.inverse
+        return spots.values.contains { spot in
+            let c = spot.center
+            guard (toCamera * SIMD4(c.x, c.y, c.z, 1)).z < -0.05, let p = view.project(c) else { return false }
+            return middle.contains(p)
+        }
     }
 
     /// Anchors a box from a frame (fractions of the portrait image, top-left origin) to the
@@ -581,7 +591,7 @@ struct MealScannerView: View {
             .onAppear { camera.start() }
             .task { await liveLoop() }
             .onDisappear { camera.stop() }
-            .onChange(of: pickerItem) { item in
+            .onChange(of: pickerItem) { _, item in
                 guard let item else { return }
                 Task {
                     if let data = try? await item.loadTransferable(type: Data.self), let ui = UIImage(data: data) {
@@ -940,8 +950,11 @@ struct MealScannerView: View {
     /// "Recognizing…" / what to do, at the top of the live view.
     private var liveStatus: some View {
         HStack(spacing: 6) {
-            if liveBusy { ProgressView().controlSize(.small).tint(.white) }
-            Text(liveBusy ? "מזהה…" : (liveItems.isEmpty ? "כוון אל האוכל והחזק רגע" : "הקש על מאכל כדי להוסיף"))
+            // The processing frame already says "processing" where it's looking; only say it
+            // up here when that frame is out of view.
+            let busyHere = liveBusy && !pending.contains { camera.onScreen[$0] != nil }
+            if busyHere { ProgressView().controlSize(.small).tint(.white) }
+            Text(busyHere ? "מזהה…" : (liveItems.isEmpty ? "כוון אל האוכל והחזק רגע" : "הקש על מאכל כדי להוסיף"))
         }
         .font(.footnote.weight(.semibold))
         .foregroundStyle(.white)
@@ -976,6 +989,10 @@ struct MealScannerView: View {
                     var id = matchID
                     // A food from an earlier session: bring it into this scan from memory.
                     if !liveItems.contains(where: { $0.id == matchID }) {
+                        // Something already labelled sits there (e.g. Claude named it a moment
+                        // ago): don't add a second label for the same object.
+                        if let here = camera.viewRect(for: box, imageSize: frame.size),
+                           camera.onScreen.contains(where: { sameObject($0.value, here) }) { continue }
                         guard var item = FoodMemory.shared.draft(for: matchID) else { continue }
                         item.box = box
                         id = item.id
