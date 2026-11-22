@@ -11,7 +11,9 @@ let output = URL(fileURLWithPath: args[2])
 let parameters = MLImageClassifier.ModelParameters(
     validation: .split(strategy: .automatic),
     maxIterations: 100,
-    augmentation: [.flip, .crop],
+    // No augmentation: it multiplies the images to extract features from, and GitHub's
+    // virtual Macs have no Neural Engine, so a run with it didn't finish in 2.5 hours.
+    augmentation: [],
     algorithm: .transferLearning(featureExtractor: .scenePrint(revision: 2), classifier: .logisticRegressor))
 
 let classifier = try MLImageClassifier(
