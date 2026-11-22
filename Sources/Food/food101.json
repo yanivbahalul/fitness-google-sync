@@ -1,0 +1,507 @@
+{
+"apple_pie": [
+"פאי תפוחים",
+"Pie, apple",
+125
+],
+"baby_back_ribs": [
+"צלעות חזיר בגריל",
+"Pork, ribs, cooked",
+250
+],
+"baklava": [
+"בקלאווה",
+"Baklava",
+60
+],
+"beef_carpaccio": [
+"קרפצ'יו בקר",
+"Beef, raw",
+80
+],
+"beef_tartare": [
+"טרטר בקר",
+"Beef, ground, raw",
+120
+],
+"beet_salad": [
+"סלט סלק",
+"Beets, cooked",
+150
+],
+"beignets": [
+"בינייה (סופגניה צרפתית)",
+"Doughnuts, yeast-leavened",
+60
+],
+"bibimbap": [
+"ביבימבאפ",
+"Rice, white, cooked",
+400
+],
+"bread_pudding": [
+"פודינג לחם",
+"Bread pudding",
+150
+],
+"breakfast_burrito": [
+"בוריטו בוקר",
+"Burrito, beans and cheese",
+220
+],
+"bruschetta": [
+"ברוסקטה",
+"Bread, Italian",
+100
+],
+"caesar_salad": [
+"סלט קיסר",
+"Salad, caesar",
+200
+],
+"cannoli": [
+"קנולי",
+"Pastry",
+80
+],
+"caprese_salad": [
+"סלט קפרזה",
+"Cheese, mozzarella",
+180
+],
+"carrot_cake": [
+"עוגת גזר",
+"Cake, carrot",
+110
+],
+"ceviche": [
+"סביצ'ה",
+"Fish, raw",
+150
+],
+"cheesecake": [
+"עוגת גבינה",
+"Cheesecake",
+120
+],
+"cheese_plate": [
+"פלטת גבינות",
+"Cheese, cheddar",
+100
+],
+"chicken_curry": [
+"קארי עוף",
+"Chicken, curry",
+300
+],
+"chicken_quesadilla": [
+"קסדייה עוף",
+"Quesadilla, chicken",
+200
+],
+"chicken_wings": [
+"כנפיים",
+"Chicken, wing, fried",
+200
+],
+"chocolate_cake": [
+"עוגת שוקולד",
+"Cake, chocolate",
+110
+],
+"chocolate_mousse": [
+"מוס שוקולד",
+"Mousse, chocolate",
+100
+],
+"churros": [
+"צ'ורוס",
+"Churros",
+80
+],
+"clam_chowder": [
+"מרק צדפות",
+"Soup, clam chowder",
+250
+],
+"club_sandwich": [
+"קלאב סנדוויץ'",
+"Sandwich, club",
+250
+],
+"crab_cakes": [
+"קציצות סרטן",
+"Crab cakes",
+120
+],
+"creme_brulee": [
+"קרם ברולה",
+"Custard",
+120
+],
+"croque_madame": [
+"קרוק מאדאם",
+"Sandwich, ham and cheese",
+230
+],
+"cup_cakes": [
+"קאפקייק",
+"Cupcake",
+70
+],
+"deviled_eggs": [
+"ביצים ממולאות",
+"Egg, whole, hard-boiled",
+100
+],
+"donuts": [
+"סופגניה / דונאט",
+"Doughnuts, yeast-leavened, glazed",
+65
+],
+"dumplings": [
+"כיסונים",
+"Dumpling",
+150
+],
+"edamame": [
+"אדממה",
+"Edamame, frozen, prepared",
+120
+],
+"eggs_benedict": [
+"ביצים בנדיקט",
+"Egg, poached",
+250
+],
+"escargots": [
+"אסקרגו",
+"Snail, raw",
+100
+],
+"falafel": [
+"פלאפל",
+"Falafel",
+120
+],
+"filet_mignon": [
+"פילה בקר",
+"Beef, tenderloin, cooked",
+200
+],
+"fish_and_chips": [
+"פיש אנד צ'יפס",
+"Fish, fried",
+350
+],
+"foie_gras": [
+"כבד אווז",
+"Pate de foie gras",
+60
+],
+"french_fries": [
+"צ'יפס",
+"French fries",
+150
+],
+"french_onion_soup": [
+"מרק בצל",
+"Soup, onion",
+300
+],
+"french_toast": [
+"פרנץ' טוסט",
+"French toast",
+150
+],
+"fried_calamari": [
+"קלמרי מטוגן",
+"Squid, fried",
+150
+],
+"fried_rice": [
+"אורז מוקפץ",
+"Rice, fried",
+250
+],
+"frozen_yogurt": [
+"פרוזן יוגורט",
+"Frozen yogurt",
+150
+],
+"garlic_bread": [
+"לחם שום",
+"Bread, garlic",
+80
+],
+"gnocchi": [
+"ניוקי",
+"Gnocchi",
+200
+],
+"greek_salad": [
+"סלט יווני",
+"Salad, greek",
+250
+],
+"grilled_cheese_sandwich": [
+"טוסט גבינה",
+"Sandwich, grilled cheese",
+150
+],
+"grilled_salmon": [
+"סלמון בגריל",
+"Fish, salmon, cooked",
+180
+],
+"guacamole": [
+"גואקמולי",
+"Guacamole",
+60
+],
+"gyoza": [
+"גיוזה",
+"Dumpling",
+150
+],
+"hamburger": [
+"המבורגר",
+"Hamburger",
+250
+],
+"hot_and_sour_soup": [
+"מרק חמוץ חריף",
+"Soup, hot and sour",
+300
+],
+"hot_dog": [
+"נקניקייה בלחמנייה",
+"Hot dog, plain",
+100
+],
+"huevos_rancheros": [
+"ביצים רנצ'רוס",
+"Egg, fried",
+250
+],
+"hummus": [
+"חומוס",
+"Hummus",
+100
+],
+"ice_cream": [
+"גלידה",
+"Ice creams, vanilla",
+120
+],
+"lasagna": [
+"לזניה",
+"Lasagna",
+300
+],
+"lobster_bisque": [
+"ביסק לובסטר",
+"Soup, cream",
+250
+],
+"lobster_roll_sandwich": [
+"כריך לובסטר",
+"Lobster, cooked",
+200
+],
+"macaroni_and_cheese": [
+"מקרוני וגבינה",
+"Macaroni and cheese",
+250
+],
+"macarons": [
+"מקרון",
+"Cookies",
+30
+],
+"miso_soup": [
+"מרק מיסו",
+"Soup, miso",
+250
+],
+"mussels": [
+"מולים",
+"Mussel, cooked",
+200
+],
+"nachos": [
+"נאצ'וס",
+"Nachos",
+200
+],
+"omelette": [
+"חביתה",
+"Egg, omelet",
+150
+],
+"onion_rings": [
+"טבעות בצל",
+"Onion rings",
+120
+],
+"oysters": [
+"צדפות",
+"Oyster, raw",
+100
+],
+"pad_thai": [
+"פאד תאי",
+"Pad thai",
+350
+],
+"paella": [
+"פאייה",
+"Rice, white, cooked",
+350
+],
+"pancakes": [
+"פנקייק",
+"Pancakes, plain",
+150
+],
+"panna_cotta": [
+"פנה קוטה",
+"Pudding, vanilla",
+120
+],
+"peking_duck": [
+"ברווז פקיני",
+"Duck, roasted",
+200
+],
+"pho": [
+"פו",
+"Soup, beef noodle",
+450
+],
+"pizza": [
+"פיצה",
+"Pizza, cheese",
+220
+],
+"pork_chop": [
+"צלע חזיר",
+"Pork, chop, cooked",
+200
+],
+"poutine": [
+"פוטין",
+"French fries",
+300
+],
+"prime_rib": [
+"אנטריקוט",
+"Beef, rib, cooked",
+250
+],
+"pulled_pork_sandwich": [
+"כריך פולד פורק",
+"Sandwich, pork",
+250
+],
+"ramen": [
+"ראמן",
+"Noodles, ramen",
+450
+],
+"ravioli": [
+"רביולי",
+"Ravioli, cheese",
+250
+],
+"red_velvet_cake": [
+"עוגת רד וולווט",
+"Cake",
+110
+],
+"risotto": [
+"ריזוטו",
+"Rice, white, cooked",
+300
+],
+"samosa": [
+"סמוסה",
+"Samosa",
+100
+],
+"sashimi": [
+"סשימי",
+"Fish, tuna, raw",
+120
+],
+"scallops": [
+"סקאלופס",
+"Scallop, cooked",
+120
+],
+"seaweed_salad": [
+"סלט אצות",
+"Seaweed",
+100
+],
+"shrimp_and_grits": [
+"שרימפס וגריטס",
+"Shrimp, cooked",
+300
+],
+"spaghetti_bolognese": [
+"ספגטי בולונז",
+"Spaghetti with meat sauce",
+350
+],
+"spaghetti_carbonara": [
+"ספגטי קרבונרה",
+"Pasta, cooked",
+350
+],
+"spring_rolls": [
+"אגרול",
+"Egg roll",
+120
+],
+"steak": [
+"סטייק",
+"Beef, steak, cooked",
+250
+],
+"strawberry_shortcake": [
+"עוגת תותים",
+"Cake, shortcake",
+150
+],
+"sushi": [
+"סושי",
+"Sushi",
+200
+],
+"tacos": [
+"טאקו",
+"Taco",
+170
+],
+"takoyaki": [
+"טאקויאקי",
+"Dumpling",
+150
+],
+"tiramisu": [
+"טירמיסו",
+"Tiramisu",
+120
+],
+"tuna_tartare": [
+"טרטר טונה",
+"Fish, tuna, raw",
+120
+],
+"waffles": [
+"וופל בלגי",
+"Waffles, plain",
+100
+]
+}
