@@ -4,6 +4,7 @@ import CoreImage
 import PhotosUI
 import RealityKit
 import SwiftUI
+import Vision
 
 // Live meal scanner.
 //
@@ -37,7 +38,6 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
     private var spots: [UUID: Spot] = [:]
     private var lastPose: simd_float4x4?
     private var lastMove = Date.distantPast
-    private var lastProjection: TimeInterval = 0
     private var running = false
     private let ciContext = CIContext()
 
@@ -133,11 +133,7 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
             }
         }
         lastPose = pose
-        // Place the spots on screen ~30 times a second.
-        if frame.timestamp - lastProjection > 1.0 / 30 {
-            lastProjection = frame.timestamp
-            project(frame)
-        }
+        project(frame)
     }
 
     private func project(_ frame: ARFrame) {
@@ -155,12 +151,38 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
             var rect = CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
             rect = rect.insetBy(dx: min(0, (rect.width - 56) / 2), dy: min(0, (rect.height - 56) / 2))
             guard rect.intersects(view.bounds) else { continue }
+            // Smooth out the tiny frame-to-frame tremble of the camera pose (strongest up
+            // close); a big jump (the spot just came into view) is taken as is.
+            if let old = onScreen[id], abs(old.midX - rect.midX) + abs(old.midY - rect.midY) < 160 {
+                let k: CGFloat = 0.3
+                rect = CGRect(x: old.minX + (rect.minX - old.minX) * k, y: old.minY + (rect.minY - old.minY) * k,
+                              width: old.width + (rect.width - old.width) * k,
+                              height: old.height + (rect.height - old.height) * k)
+            }
             next[id] = rect
         }
         onScreen = next
     }
 
     // MARK: Images
+
+    /// Snaps a rough box from the model (fractions of `image`, top-left origin) to the
+    /// object Vision sees there, so the frame sits on the actual cup or plate.
+    func refine(_ box: CGRect, in image: UIImage) -> CGRect {
+        guard let cg = image.cgImage else { return box }
+        let request = VNGenerateObjectnessBasedSaliencyImageRequest()
+        try? VNImageRequestHandler(cgImage: cg, options: [:]).perform([request])
+        let objects = (request.results?.first?.salientObjects ?? []).map { o in
+            CGRect(x: o.boundingBox.minX, y: 1 - o.boundingBox.maxY, width: o.boundingBox.width, height: o.boundingBox.height)
+        }
+        func overlap(_ a: CGRect, _ b: CGRect) -> CGFloat {
+            let i = a.intersection(b)
+            guard !i.isNull, i.width > 0, i.height > 0 else { return 0 }
+            return (i.width * i.height) / (a.union(b).width * a.union(b).height)
+        }
+        guard let best = objects.max(by: { overlap($0, box) < overlap($1, box) }), overlap(best, box) > 0.1 else { return box }
+        return best
+    }
 
     /// The current frame as a small portrait image for the live look-up, with the frame
     /// itself (its camera pose anchors the answer to the room).
@@ -588,7 +610,7 @@ struct MealScannerView: View {
 
             var added = false
             for item in found {
-                if let box = item.box, let spot = camera.anchor(box, from: arFrame) {
+                if let rough = item.box, let spot = camera.anchor(camera.refine(rough, in: frame), from: arFrame) {
                     // The same food already found nearby: keep the first one.
                     let duplicate = liveItems.contains { known in
                         known.label == item.label && (camera.center(of: known.id).map { simd_distance($0, spot.center) < 0.2 } ?? false)
