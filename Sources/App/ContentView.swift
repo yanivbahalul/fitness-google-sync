@@ -265,6 +265,14 @@ struct EnergyCard: View {
                         }
                         Text((left ?? 0) < 0 ? "קלוריות מעל היעד" : "קלוריות נותרו")
                             .font(.title3.weight(.semibold))
+                        // What was burned so far on this day (Google's measured total).
+                        if let burned {
+                            Label("\(burned.formatted()) נשרפו", systemImage: "flame.fill")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(ChartColors.orange)
+                                .monospacedDigit()
+                                .padding(.top, 2)
+                        }
                     }
                     Spacer(minLength: 8)
                     ring(eaten: eaten, target: target)
@@ -274,7 +282,8 @@ struct EnergyCard: View {
                 .background(Color(.secondarySystemGroupedBackground),
                             in: RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous))
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(left.map { $0 < 0 ? "\(-$0) קלוריות מעל היעד" : "נותרו \($0) קלוריות" } ?? "אין עדיין יעד")
+            .accessibilityLabel((left.map { $0 < 0 ? "\(-$0) קלוריות מעל היעד" : "נותרו \($0) קלוריות" } ?? "אין עדיין יעד")
+                                + (burned.map { ", נשרפו \($0) קלוריות" } ?? ""))
 
             // Macros left, from a 30 / 40 / 30 split of the calorie target.
             HStack(spacing: 10) {

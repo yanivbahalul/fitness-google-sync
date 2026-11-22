@@ -320,7 +320,7 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
                 sumX[l, default: 0] += x; sumY[l, default: 0] += y; count[l, default: 0] += 1
             }
         }
-        return minX.keys.compactMap { l in
+        return minX.keys.compactMap { (l: UInt8) -> ObjectShape? in
             guard let x0 = minX[l], let x1 = maxX[l], let y0 = minY[l], let y1 = maxY[l], let n = count[l], n > 0 else { return nil }
             let bw = CGFloat(x1 - x0 + 1), bh = CGFloat(y1 - y0 + 1)
             let box = CGRect(x: CGFloat(x0) / CGFloat(w), y: CGFloat(y0) / CGFloat(h),
@@ -328,14 +328,15 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
             // Outline: from the object's centre, the farthest pixel of the object along
             // each of 64 directions, lightly smoothed. Fine for food, which is mostly
             // convex from its middle (cups, bottles, plates, fruit).
-            let cx = Double(sumX[l]!) / Double(n), cy = Double(sumY[l]!) / Double(n)
+            let cx: Double = Double(sumX[l] ?? 0) / Double(n)
+            let cy: Double = Double(sumY[l] ?? 0) / Double(n)
             let rays = 64
-            let reach = Double(max(x1 - x0, y1 - y0)) * 1.5
+            let reach: Double = Double(max(x1 - x0, y1 - y0)) * 1.5
             var radii = [Double](repeating: 0, count: rays)
             for i in 0..<rays {
-                let a = Double(i) / Double(rays) * 2 * .pi
-                let dx = cos(a), dy = sin(a)
-                var r = 0.0, far = 0.0
+                let a: Double = Double(i) / Double(rays) * 2 * Double.pi
+                let dx: Double = cos(a), dy: Double = sin(a)
+                var r: Double = 0, far: Double = 0
                 while r < reach {
                     let x = Int(cx + dx * r), y = Int(cy + dy * r)
                     if x < 0 || y < 0 || x >= w || y >= h { break }
@@ -346,14 +347,15 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
             }
             // Too many empty directions: the middle isn't on the object; keep only the box.
             guard radii.filter({ $0 < 1 }).count < rays / 8 else { return ObjectShape(box: box) }
-            let smooth = (0..<rays).map { i in
-                (radii[(i + rays - 1) % rays] + 2 * radii[i] + radii[(i + 1) % rays]) / 4
-            }
-            let outline = (0..<rays).map { i -> CGPoint in
-                let a = Double(i) / Double(rays) * 2 * .pi
-                let px = cx + cos(a) * (smooth[i] + 0.5), py = cy + sin(a) * (smooth[i] + 0.5)
-                return CGPoint(x: min(max((px - Double(x0)) / Double(bw), 0), 1),
-                               y: min(max((py - Double(y0)) / Double(bh), 0), 1))
+            var outline: [CGPoint] = []
+            for i in 0..<rays {
+                let before: Double = radii[(i + rays - 1) % rays]
+                let after: Double = radii[(i + 1) % rays]
+                let r: Double = (before + 2 * radii[i] + after) / 4 + 0.5
+                let a: Double = Double(i) / Double(rays) * 2 * Double.pi
+                let fx: Double = (cx + cos(a) * r - Double(x0)) / Double(bw)
+                let fy: Double = (cy + sin(a) * r - Double(y0)) / Double(bh)
+                outline.append(CGPoint(x: min(max(fx, 0), 1), y: min(max(fy, 0), 1)))
             }
             return ObjectShape(box: box, outline: outline)
         }
