@@ -167,21 +167,63 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
     // MARK: Images
 
     /// Snaps a rough box from the model (fractions of `image`, top-left origin) to the
-    /// object Vision sees there, so the frame sits on the actual cup or plate.
+    /// object the phone sees there, so the frame sits on that one cup or plate. Uses
+    /// Vision's per-object segmentation (iOS 17+), which keeps neighbouring things apart;
+    /// a candidate much bigger than the model's box (two objects merged) is rejected.
     func refine(_ box: CGRect, in image: UIImage) -> CGRect {
         guard let cg = image.cgImage else { return box }
-        let request = VNGenerateObjectnessBasedSaliencyImageRequest()
-        try? VNImageRequestHandler(cgImage: cg, options: [:]).perform([request])
-        let objects = (request.results?.first?.salientObjects ?? []).map { o in
-            CGRect(x: o.boundingBox.minX, y: 1 - o.boundingBox.maxY, width: o.boundingBox.width, height: o.boundingBox.height)
+        var objects: [CGRect] = []
+        if #available(iOS 17.0, *) {
+            objects = instanceBoxes(cg)
+        }
+        if objects.isEmpty {
+            let request = VNGenerateObjectnessBasedSaliencyImageRequest()
+            try? VNImageRequestHandler(cgImage: cg, options: [:]).perform([request])
+            objects = (request.results?.first?.salientObjects ?? []).map { o in
+                CGRect(x: o.boundingBox.minX, y: 1 - o.boundingBox.maxY, width: o.boundingBox.width, height: o.boundingBox.height)
+            }
         }
         func overlap(_ a: CGRect, _ b: CGRect) -> CGFloat {
             let i = a.intersection(b)
             guard !i.isNull, i.width > 0, i.height > 0 else { return 0 }
-            return (i.width * i.height) / (a.union(b).width * a.union(b).height)
+            let u = a.union(b)
+            return (i.width * i.height) / (u.width * u.height)
         }
-        guard let best = objects.max(by: { overlap($0, box) < overlap($1, box) }), overlap(best, box) > 0.1 else { return box }
-        return best
+        let area = box.width * box.height
+        let center = CGPoint(x: box.midX, y: box.midY)
+        let fitting = objects.filter { o in
+            o.width * o.height <= area * 2.5 && (o.contains(center) || overlap(o, box) > 0.15)
+        }
+        return fitting.max { overlap($0, box) < overlap($1, box) } ?? box
+    }
+
+    /// Bounding boxes of the separate objects Vision finds (fractions, top-left origin).
+    @available(iOS 17.0, *)
+    private func instanceBoxes(_ cg: CGImage) -> [CGRect] {
+        let request = VNGenerateForegroundInstanceMaskRequest()
+        try? VNImageRequestHandler(cgImage: cg, options: [:]).perform([request])
+        guard let result = request.results?.first else { return [] }
+        let mask = result.instanceMask
+        CVPixelBufferLockBaseAddress(mask, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(mask, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(mask) else { return [] }
+        let w = CVPixelBufferGetWidth(mask), h = CVPixelBufferGetHeight(mask)
+        let rowBytes = CVPixelBufferGetBytesPerRow(mask)
+        var minX = [Int: Int](), minY = [Int: Int](), maxX = [Int: Int](), maxY = [Int: Int]()
+        for y in 0..<h {
+            let row = base.advanced(by: y * rowBytes).assumingMemoryBound(to: UInt8.self)
+            for x in 0..<w {
+                let label = Int(row[x])
+                guard label != 0 else { continue }
+                minX[label] = min(minX[label] ?? x, x); maxX[label] = max(maxX[label] ?? x, x)
+                minY[label] = min(minY[label] ?? y, y); maxY[label] = max(maxY[label] ?? y, y)
+            }
+        }
+        return minX.keys.compactMap { label in
+            guard let x0 = minX[label], let x1 = maxX[label], let y0 = minY[label], let y1 = maxY[label] else { return nil }
+            return CGRect(x: CGFloat(x0) / CGFloat(w), y: CGFloat(y0) / CGFloat(h),
+                          width: CGFloat(x1 - x0 + 1) / CGFloat(w), height: CGFloat(y1 - y0 + 1) / CGFloat(h))
+        }
     }
 
     /// The current frame as a small portrait image for the live look-up, with the frame
@@ -665,11 +707,13 @@ struct MealScannerView: View {
             var added = false
             for item in found {
                 if let rough = item.box, let spot = camera.anchor(camera.refine(rough, in: frame), from: arFrame) {
-                    // The same food already found nearby: keep the first one.
-                    let duplicate = liveItems.contains { known in
-                        known.label == item.label && (camera.center(of: known.id).map { simd_distance($0, spot.center) < 0.2 } ?? false)
+                    // The same food seen again: it's the one already found. If it's somewhere
+                    // else now (the cup was moved), move its frame there and resize it.
+                    if let known = liveItems.first(where: { $0.label == item.label }) {
+                        camera.set(known.id, spot)
+                        added = true
+                        continue
                     }
-                    guard !duplicate else { continue }
                     camera.set(item.id, spot)
                     withAnimation(.easeOut(duration: 0.25)) { liveItems.append(item) }
                     added = true
