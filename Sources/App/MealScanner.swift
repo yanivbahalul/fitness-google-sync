@@ -17,6 +17,14 @@ import Vision
 
 // MARK: - AR camera
 
+/// An object found in an image: its bounding box (fractions of the image, top-left origin)
+/// and its outline as points relative to that box (0…1 each way). An empty outline means the
+/// shape isn't known (saliency fallback); it's drawn as a rounded frame then.
+struct ObjectShape {
+    var box: CGRect
+    var outline: [CGPoint] = []
+}
+
 /// ARKit session with world-anchored spots for recognized foods.
 final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked Sendable {
     /// A place in the room: four corners and a center, in world coordinates (meters).
@@ -176,8 +184,8 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
     /// object the phone sees there, so the frame sits on that one cup or plate. Uses
     /// Vision's per-object segmentation (iOS 17+), which keeps neighbouring things apart;
     /// a candidate much bigger than the model's box (two objects merged) is rejected.
-    func refine(_ box: CGRect, in image: UIImage) -> CGRect {
-        guard let cg = image.cgImage else { return box }
+    func refine(_ box: CGRect, in image: UIImage) -> ObjectShape {
+        guard let cg = image.cgImage else { return ObjectShape(box: box) }
         let objects = Self.detectObjects(cg)
         func overlap(_ a: CGRect, _ b: CGRect) -> CGFloat {
             let i = a.intersection(b)
@@ -188,22 +196,23 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
         let area = box.width * box.height
         let center = CGPoint(x: box.midX, y: box.midY)
         let fitting = objects.filter { o in
-            o.width * o.height <= area * 2.5 && (o.contains(center) || overlap(o, box) > 0.15)
+            o.box.width * o.box.height <= area * 2.5 && (o.box.contains(center) || overlap(o.box, box) > 0.15)
         }
-        return fitting.max { overlap($0, box) < overlap($1, box) } ?? box
+        return fitting.max { overlap($0.box, box) < overlap($1.box, box) } ?? ObjectShape(box: box)
     }
 
     /// The separate objects in an image (fractions, top-left origin): per-object
     /// segmentation on iOS 17+, saliency otherwise.
-    static func detectObjects(_ cg: CGImage) -> [CGRect] {
+    static func detectObjects(_ cg: CGImage) -> [ObjectShape] {
         if #available(iOS 17.0, *) {
-            let boxes = instanceBoxes(cg)
-            if !boxes.isEmpty { return boxes }
+            let shapes = instanceShapes(cg)
+            if !shapes.isEmpty { return shapes }
         }
         let request = VNGenerateObjectnessBasedSaliencyImageRequest()
         try? VNImageRequestHandler(cgImage: cg, options: [:]).perform([request])
         return (request.results?.first?.salientObjects ?? []).map { o in
-            CGRect(x: o.boundingBox.minX, y: 1 - o.boundingBox.maxY, width: o.boundingBox.width, height: o.boundingBox.height)
+            ObjectShape(box: CGRect(x: o.boundingBox.minX, y: 1 - o.boundingBox.maxY,
+                                    width: o.boundingBox.width, height: o.boundingBox.height))
         }
     }
 
@@ -239,17 +248,17 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
     /// phone in a few tens of milliseconds.
     /// `strictness` per fingerprint: 1 for this session's foods, lower (stricter) for
     /// foods from earlier sessions, where light and angle differ more.
-    static func findRemembered(in image: UIImage, among prints: [(UUID, VNFeaturePrintObservation, Float)]) -> [(UUID, CGRect)] {
+    static func findRemembered(in image: UIImage, among prints: [(UUID, VNFeaturePrintObservation, Float)]) -> [(UUID, ObjectShape)] {
         guard !prints.isEmpty, let cg = image.cgImage else { return [] }
         // Fingerprints from the newer model (iOS 17+) are normalized: same object ≈ 0.2-0.5,
         // different objects ≈ 0.8+. The older model uses a much larger scale.
         let threshold: Float
         if #available(iOS 17.0, *) { threshold = 0.6 } else { threshold = 16 }
         var used = Set<UUID>()
-        var found: [(UUID, CGRect)] = []
-        let objects = detectObjects(cg).sorted { $0.width * $0.height > $1.width * $1.height }.prefix(6)
+        var found: [(UUID, ObjectShape)] = []
+        let objects = detectObjects(cg).sorted { $0.box.width * $0.box.height > $1.box.width * $1.box.height }.prefix(6)
         for object in objects {
-            guard let print = featurePrint(object, in: cg) else { continue }
+            guard let print = featurePrint(object.box, in: cg) else { continue }
             // Nearest neighbour per food (a food can have several example fingerprints).
             var nearest: [UUID: (distance: Float, limit: Float)] = [:]
             for (id, known, strictness) in prints where !used.contains(id) {
@@ -284,9 +293,9 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
         return score
     }
 
-    /// Bounding boxes of the separate objects Vision finds (fractions, top-left origin).
+    /// The separate objects Vision finds, with their outlines (per-object segmentation).
     @available(iOS 17.0, *)
-    private static func instanceBoxes(_ cg: CGImage) -> [CGRect] {
+    private static func instanceShapes(_ cg: CGImage) -> [ObjectShape] {
         let request = VNGenerateForegroundInstanceMaskRequest()
         try? VNImageRequestHandler(cgImage: cg, options: [:]).perform([request])
         guard let result = request.results?.first else { return [] }
@@ -296,20 +305,57 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
         guard let base = CVPixelBufferGetBaseAddress(mask) else { return [] }
         let w = CVPixelBufferGetWidth(mask), h = CVPixelBufferGetHeight(mask)
         let rowBytes = CVPixelBufferGetBytesPerRow(mask)
-        var minX = [Int: Int](), minY = [Int: Int](), maxX = [Int: Int](), maxY = [Int: Int]()
+        func label(_ x: Int, _ y: Int) -> UInt8 {
+            base.advanced(by: y * rowBytes).assumingMemoryBound(to: UInt8.self)[x]
+        }
+        var minX = [UInt8: Int](), minY = [UInt8: Int](), maxX = [UInt8: Int](), maxY = [UInt8: Int]()
+        var sumX = [UInt8: Int](), sumY = [UInt8: Int](), count = [UInt8: Int]()
         for y in 0..<h {
             let row = base.advanced(by: y * rowBytes).assumingMemoryBound(to: UInt8.self)
             for x in 0..<w {
-                let label = Int(row[x])
-                guard label != 0 else { continue }
-                minX[label] = min(minX[label] ?? x, x); maxX[label] = max(maxX[label] ?? x, x)
-                minY[label] = min(minY[label] ?? y, y); maxY[label] = max(maxY[label] ?? y, y)
+                let l = row[x]
+                guard l != 0 else { continue }
+                minX[l] = min(minX[l] ?? x, x); maxX[l] = max(maxX[l] ?? x, x)
+                minY[l] = min(minY[l] ?? y, y); maxY[l] = max(maxY[l] ?? y, y)
+                sumX[l, default: 0] += x; sumY[l, default: 0] += y; count[l, default: 0] += 1
             }
         }
-        return minX.keys.compactMap { label in
-            guard let x0 = minX[label], let x1 = maxX[label], let y0 = minY[label], let y1 = maxY[label] else { return nil }
-            return CGRect(x: CGFloat(x0) / CGFloat(w), y: CGFloat(y0) / CGFloat(h),
-                          width: CGFloat(x1 - x0 + 1) / CGFloat(w), height: CGFloat(y1 - y0 + 1) / CGFloat(h))
+        return minX.keys.compactMap { l in
+            guard let x0 = minX[l], let x1 = maxX[l], let y0 = minY[l], let y1 = maxY[l], let n = count[l], n > 0 else { return nil }
+            let bw = CGFloat(x1 - x0 + 1), bh = CGFloat(y1 - y0 + 1)
+            let box = CGRect(x: CGFloat(x0) / CGFloat(w), y: CGFloat(y0) / CGFloat(h),
+                             width: bw / CGFloat(w), height: bh / CGFloat(h))
+            // Outline: from the object's centre, the farthest pixel of the object along
+            // each of 64 directions, lightly smoothed. Fine for food, which is mostly
+            // convex from its middle (cups, bottles, plates, fruit).
+            let cx = Double(sumX[l]!) / Double(n), cy = Double(sumY[l]!) / Double(n)
+            let rays = 64
+            let reach = Double(max(x1 - x0, y1 - y0)) * 1.5
+            var radii = [Double](repeating: 0, count: rays)
+            for i in 0..<rays {
+                let a = Double(i) / Double(rays) * 2 * .pi
+                let dx = cos(a), dy = sin(a)
+                var r = 0.0, far = 0.0
+                while r < reach {
+                    let x = Int(cx + dx * r), y = Int(cy + dy * r)
+                    if x < 0 || y < 0 || x >= w || y >= h { break }
+                    if label(x, y) == l { far = r }
+                    r += 1
+                }
+                radii[i] = far
+            }
+            // Too many empty directions: the middle isn't on the object; keep only the box.
+            guard radii.filter({ $0 < 1 }).count < rays / 8 else { return ObjectShape(box: box) }
+            let smooth = (0..<rays).map { i in
+                (radii[(i + rays - 1) % rays] + 2 * radii[i] + radii[(i + 1) % rays]) / 4
+            }
+            let outline = (0..<rays).map { i -> CGPoint in
+                let a = Double(i) / Double(rays) * 2 * .pi
+                let px = cx + cos(a) * (smooth[i] + 0.5), py = cy + sin(a) * (smooth[i] + 0.5)
+                return CGPoint(x: min(max((px - Double(x0)) / Double(bw), 0), 1),
+                               y: min(max((py - Double(y0)) / Double(bh), 0), 1))
+            }
+            return ObjectShape(box: box, outline: outline)
         }
     }
 
@@ -381,6 +427,50 @@ private struct Brackets: Shape {
     }
 }
 
+/// An object's outline (points relative to the frame, 0…1), drawn as a smooth closed
+/// curve; a rounded frame when the outline isn't known.
+private struct ObjectOutline: Shape {
+    var points: [CGPoint]
+
+    func path(in rect: CGRect) -> Path {
+        guard points.count >= 6 else {
+            return Path(roundedRect: rect, cornerRadius: min(18, rect.width / 4, rect.height / 4))
+        }
+        let p = points.map { CGPoint(x: rect.minX + $0.x * rect.width, y: rect.minY + $0.y * rect.height) }
+        let n = p.count
+        var path = Path()
+        path.move(to: p[0])
+        // Catmull-Rom through every point, as cubic Béziers.
+        for i in 0..<n {
+            let p0 = p[(i + n - 1) % n], p1 = p[i], p2 = p[(i + 1) % n], p3 = p[(i + 2) % n]
+            let c1 = CGPoint(x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6)
+            let c2 = CGPoint(x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6)
+            path.addCurve(to: p2, control1: c1, control2: c2)
+        }
+        path.closeSubpath()
+        return path
+    }
+}
+
+/// A recognized food's outline on the camera view; draws itself in when it appears.
+private struct FoodOutline: View {
+    var points: [CGPoint]
+    var added: Bool
+    @State private var drawn: CGFloat = 0
+
+    var body: some View {
+        let color = added ? Color.green : Theme.accent
+        ZStack {
+            ObjectOutline(points: points).fill(color.opacity(0.14))
+            ObjectOutline(points: points)
+                .trim(from: 0, to: drawn)
+                .stroke(color, style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+                .shadow(color: color.opacity(0.8), radius: 6)
+        }
+        .onAppear { withAnimation(.easeOut(duration: 0.45)) { drawn = 1 } }
+    }
+}
+
 // MARK: - Scanner screen
 
 struct MealScannerView: View {
@@ -411,6 +501,8 @@ struct MealScannerView: View {
     @State private var memoryLink: [UUID: UUID] = [:]
     /// Labels the user fixed by hand ("זה בעצם…"); a later answer from Claude doesn't override them.
     @State private var userCorrected: Set<UUID> = []
+    /// Each live food's outline (relative to its frame), from per-object segmentation.
+    @State private var outlines: [UUID: [CGPoint]] = [:]
     /// The food being corrected ("this is actually…"), and what the user typed.
     @State private var correcting: FoodDraft?
     @State private var correctionText = ""
@@ -539,12 +631,19 @@ struct MealScannerView: View {
                     // Recognized foods stay on the food (anchored in the room); tap to add.
                     ForEach(liveItems) { item in
                         if let r = camera.onScreen[item.id] {
-                            Brackets()
-                                .stroke(Theme.accent, style: StrokeStyle(lineWidth: 3, lineCap: .round))
-                                .frame(width: r.width, height: r.height)
-                                .position(x: r.midX, y: r.midY)
-                                .allowsHitTesting(false)
                             let at = CGPoint(x: min(max(r.midX, 90), geo.size.width - 90), y: max(r.minY - 24, 70))
+                            let shape = outlines[item.id] ?? []
+                            // The food itself is tappable too: tap adds, long press corrects.
+                            FoodOutline(points: shape, added: tray.contains { $0.label == item.label })
+                                .frame(width: r.width, height: r.height)
+                                .contentShape(ObjectOutline(points: shape))
+                                .onTapGesture { add(item, from: at) }
+                                .onLongPressGesture {
+                                    UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                                    startCorrection(item)
+                                }
+                                .position(x: r.midX, y: r.midY)
+                                .accessibilityHidden(true)
                             liveChip(item, at: at, bottom: CGPoint(x: geo.size.width / 2, y: geo.size.height - 40))
                                 .position(at)
                         }
@@ -686,28 +785,7 @@ struct MealScannerView: View {
     private func liveChip(_ item: FoodDraft, at point: CGPoint?, bottom: CGPoint?) -> some View {
         let added = tray.contains { $0.label == item.label }
         return Button {
-            guard !added else { return }
-            var copy = item
-            copy.id = UUID()
-            copy.box = nil
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) { tray.append(copy) }
-            if let point {
-                let flyer = Flyer(text: item.label, from: point)
-                flyers.append(flyer)
-                DispatchQueue.main.async {
-                    withAnimation(.easeIn(duration: 0.55)) {
-                        if let i = flyers.firstIndex(where: { $0.id == flyer.id }) { flyers[i].arrived = true }
-                    }
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                    flyers.removeAll { $0.id == flyer.id }
-                    withAnimation(.spring(response: 0.25, dampingFraction: 0.5)) { trayBump = true }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { trayBump = false }
-                    }
-                }
-            }
+            add(item, from: point)
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: added ? "checkmark.circle.fill" : "plus.circle.fill")
@@ -727,6 +805,31 @@ struct MealScannerView: View {
         .accessibilityHint("לחיצה ארוכה לתיקון אם זוהה לא נכון")
         .contextMenu {
             Button { startCorrection(item) } label: { Label("זה בעצם…", systemImage: "pencil") }
+        }
+    }
+
+    /// Adds a live food to the meal, with the label flying to Continue.
+    private func add(_ item: FoodDraft, from point: CGPoint?) {
+        guard !tray.contains(where: { $0.label == item.label }) else { return }
+        var copy = item
+        copy.id = UUID()
+        copy.box = nil
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) { tray.append(copy) }
+        guard let point else { return }
+        let flyer = Flyer(text: item.label, from: point)
+        flyers.append(flyer)
+        DispatchQueue.main.async {
+            withAnimation(.easeIn(duration: 0.55)) {
+                if let i = flyers.firstIndex(where: { $0.id == flyer.id }) { flyers[i].arrived = true }
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            flyers.removeAll { $0.id == flyer.id }
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.5)) { trayBump = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { trayBump = false }
+            }
         }
     }
 
@@ -810,7 +913,8 @@ struct MealScannerView: View {
                 let matches = await Task.detached(priority: .userInitiated) {
                     ARScanner.findRemembered(in: frame, among: remembered)
                 }.value
-                for (matchID, box) in matches {
+                for (matchID, shape) in matches {
+                    let box = shape.box
                     var id = matchID
                     // A food from an earlier session: bring it into this scan from memory.
                     if !liveItems.contains(where: { $0.id == matchID }) {
@@ -825,6 +929,7 @@ struct MealScannerView: View {
                     if let shown = camera.onScreen[id], let here = camera.viewRect(for: box, imageSize: frame.size),
                        here.contains(CGPoint(x: shown.midX, y: shown.midY)) { continue }
                     if let spot = camera.anchor(box, from: arFrame) {
+                        if !shape.outline.isEmpty { outlines[id] = shape.outline }
                         withAnimation(.easeOut(duration: 0.2)) { camera.set(id, spot) }
                     }
                 }
@@ -857,7 +962,8 @@ struct MealScannerView: View {
             var added = false
             for item in found {
                 if let rough = item.box {
-                    let box = camera.refine(rough, in: frame)
+                    let shape = camera.refine(rough, in: frame)
+                    let box = shape.box
                     guard let spot = camera.anchor(box, from: arFrame) else { continue }
                     // The same food seen again: it's the one already found. If it's somewhere
                     // else now (the cup was moved), move its frame there and resize it.
@@ -878,6 +984,7 @@ struct MealScannerView: View {
                             replace(known, with: fresh)
                         }
                         camera.set(known.id, spot)
+                        if !shape.outline.isEmpty { outlines[known.id] = shape.outline }
                         if let print = camera.remember(known.id, box: box, in: frame) {
                             let current = liveItems.first(where: { $0.id == known.id }) ?? known
                             memoryLink[known.id] = FoodMemory.shared.learn(current, print: print,
@@ -888,6 +995,7 @@ struct MealScannerView: View {
                         continue
                     }
                     camera.set(item.id, spot)
+                    if !shape.outline.isEmpty { outlines[item.id] = shape.outline }
                     if let print = camera.remember(item.id, box: box, in: frame) {
                         memoryLink[item.id] = FoodMemory.shared.learn(item, print: print,
                                                                       quality: ARScanner.quality(box, in: frame))
