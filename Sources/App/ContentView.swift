@@ -239,8 +239,6 @@ struct EnergyCard: View {
 
     private var isToday: Bool { Calendar.current.isDateInToday(day) }
 
-    @State private var showEaten = false
-
     var body: some View {
         let entries = food.entries(on: day)
         let eaten = Int(safe: entries.map(\.kcal).reduce(0, +).rounded()) + otherApps
@@ -249,24 +247,20 @@ struct EnergyCard: View {
         let left = target.map { $0 - eaten }
 
         VStack(spacing: 12) {
-            // Calories: what's left (tap to see what was eaten instead).
-            Button { showEaten.toggle() } label: {
-                HStack(spacing: 16) {
+            // Calories left to eat today.
+            HStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 4) {
                         if loading && target == nil {
                             ProgressView()
                         } else {
-                            Text(showEaten ? eaten.formatted() : (left.map { abs($0).formatted() } ?? "—"))
+                            Text(left.map { abs($0).formatted() } ?? "—")
                                 .font(.system(size: 48, weight: .bold, design: .rounded))
                                 .monospacedDigit()
                                 .minimumScaleFactor(0.5)
                                 .lineLimit(1)
                         }
-                        Text(showEaten ? "קלוריות נאכלו" : ((left ?? 0) < 0 ? "קלוריות מעל היעד" : "קלוריות נותרו"))
+                        Text((left ?? 0) < 0 ? "קלוריות מעל היעד" : "קלוריות נותרו")
                             .font(.title3.weight(.semibold))
-                        Text("הקש להחלפה")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 8)
                     ring(eaten: eaten, target: target)
@@ -275,13 +269,8 @@ struct EnergyCard: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(.secondarySystemGroupedBackground),
                             in: RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous))
-            }
-            .buttonStyle(.plain)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(showEaten
-                ? "נאכלו \(eaten) קלוריות"
-                : left.map { $0 < 0 ? "\(-$0) קלוריות מעל היעד" : "נותרו \($0) קלוריות" } ?? "אין עדיין יעד")
-            .accessibilityHint("הקש כדי להחליף בין נותרו לנאכלו")
+            .accessibilityLabel(left.map { $0 < 0 ? "\(-$0) קלוריות מעל היעד" : "נותרו \($0) קלוריות" } ?? "אין עדיין יעד")
 
             // Macros left, from a 30 / 40 / 30 split of the calorie target.
             HStack(spacing: 10) {
