@@ -4,6 +4,7 @@ import CoreImage
 import PhotosUI
 import RealityKit
 import SwiftUI
+import Vision
 
 // Live meal scanner.
 //
@@ -37,7 +38,6 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
     private var spots: [UUID: Spot] = [:]
     private var lastPose: simd_float4x4?
     private var lastMove = Date.distantPast
-    private var lastProjection: TimeInterval = 0
     private var running = false
     private let ciContext = CIContext()
 
@@ -133,11 +133,7 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
             }
         }
         lastPose = pose
-        // Place the spots on screen ~30 times a second.
-        if frame.timestamp - lastProjection > 1.0 / 30 {
-            lastProjection = frame.timestamp
-            project(frame)
-        }
+        project(frame)
     }
 
     private func project(_ frame: ARFrame) {
@@ -155,12 +151,38 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
             var rect = CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
             rect = rect.insetBy(dx: min(0, (rect.width - 56) / 2), dy: min(0, (rect.height - 56) / 2))
             guard rect.intersects(view.bounds) else { continue }
+            // Smooth out the tiny frame-to-frame tremble of the camera pose (strongest up
+            // close); a big jump (the spot just came into view) is taken as is.
+            if let old = onScreen[id], abs(old.midX - rect.midX) + abs(old.midY - rect.midY) < 160 {
+                let k: CGFloat = 0.3
+                rect = CGRect(x: old.minX + (rect.minX - old.minX) * k, y: old.minY + (rect.minY - old.minY) * k,
+                              width: old.width + (rect.width - old.width) * k,
+                              height: old.height + (rect.height - old.height) * k)
+            }
             next[id] = rect
         }
         onScreen = next
     }
 
     // MARK: Images
+
+    /// Snaps a rough box from the model (fractions of `image`, top-left origin) to the
+    /// object Vision sees there, so the frame sits on the actual cup or plate.
+    func refine(_ box: CGRect, in image: UIImage) -> CGRect {
+        guard let cg = image.cgImage else { return box }
+        let request = VNGenerateObjectnessBasedSaliencyImageRequest()
+        try? VNImageRequestHandler(cgImage: cg, options: [:]).perform([request])
+        let objects = (request.results?.first?.salientObjects ?? []).map { o in
+            CGRect(x: o.boundingBox.minX, y: 1 - o.boundingBox.maxY, width: o.boundingBox.width, height: o.boundingBox.height)
+        }
+        func overlap(_ a: CGRect, _ b: CGRect) -> CGFloat {
+            let i = a.intersection(b)
+            guard !i.isNull, i.width > 0, i.height > 0 else { return 0 }
+            return (i.width * i.height) / (a.union(b).width * a.union(b).height)
+        }
+        guard let best = objects.max(by: { overlap($0, box) < overlap($1, box) }), overlap(best, box) > 0.1 else { return box }
+        return best
+    }
 
     /// The current frame as a small portrait image for the live look-up, with the frame
     /// itself (its camera pose anchors the answer to the room).
@@ -254,6 +276,10 @@ struct MealScannerView: View {
     @State private var tray: [FoodDraft] = []
     /// Spots with a look still in progress ("processing" waits there).
     @State private var pending: Set<UUID> = []
+    /// The food being corrected ("this is actually…"), and what the user typed.
+    @State private var correcting: FoodDraft?
+    @State private var correctionText = ""
+    @State private var showCorrection = false
     /// Labels flying from a tapped food down to the Continue button.
     @State private var flyers: [Flyer] = []
     @State private var trayBump = false
@@ -270,7 +296,7 @@ struct MealScannerView: View {
             ZStack {
                 Color.black.ignoresSafeArea()
                 if let image {
-                    ResultCanvas(image: image, drafts: $drafts, analyzing: analyzing)
+                    ResultCanvas(image: image, drafts: $drafts, analyzing: analyzing) { startCorrection($0) }
                 } else {
                     liveView
                 }
@@ -305,6 +331,15 @@ struct MealScannerView: View {
                         error = "התמונה לא נטענה (ייתכן שהיא שמורה רק ב‑iCloud)."
                     }
                 }
+            }
+            .alert("מה זה באמת?", isPresented: $showCorrection) {
+                TextField("למשל: סוכריות גומי GOOM", text: $correctionText)
+                Button("עדכן") {
+                    if let item = correcting { Task { await correct(item, as: correctionText) } }
+                }
+                Button("ביטול", role: .cancel) {}
+            } message: {
+                Text(correcting.map { "זוהה כ\"\($0.label)\". כתוב מה זה, ואעדכן את הערכים." } ?? "")
             }
             .alert("מה יש בצלחת?", isPresented: $typing) {
                 TextField("למשל: קפה הפוך גדול, 2 פרוסות לחם", text: $typedText)
@@ -547,6 +582,47 @@ struct MealScannerView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(added ? "\(item.label) נוסף" : "הוסף \(item.label), \(Int(safe: item.kcal)) קלוריות")
+        .accessibilityHint("לחיצה ארוכה לתיקון אם זוהה לא נכון")
+        .contextMenu {
+            Button { startCorrection(item) } label: { Label("זה בעצם…", systemImage: "pencil") }
+        }
+    }
+
+    private func startCorrection(_ item: FoodDraft) {
+        correcting = item
+        correctionText = ""
+        showCorrection = true
+    }
+
+    /// Replaces a misrecognized food with what the user says it is (values from the
+    /// accurate model, same place and roughly the same amount).
+    private func correct(_ item: FoodDraft, as text: String) async {
+        let name = text.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        do {
+            let result = try await MealAnalyzer.analyze(
+                image: nil, text: "\(name). כמות משוערת לפי התמונה: \(Int(safe: item.grams)) גרם.")
+            guard var fixed = result.first else {
+                error = "לא הצלחתי למצוא ערכים ל\"\(name)\". נסה לנסח אחרת."
+                return
+            }
+            fixed.id = item.id
+            fixed.box = item.box
+            withAnimation(.easeOut(duration: 0.2)) {
+                if let i = liveItems.firstIndex(where: { $0.id == item.id }) { liveItems[i] = fixed }
+                if let i = drafts.firstIndex(where: { $0.id == item.id }) { drafts[i] = fixed }
+                // Already added before the fix: replace the added copy too.
+                if let i = tray.firstIndex(where: { $0.label == item.label }) {
+                    var copy = fixed
+                    copy.id = tray[i].id
+                    copy.box = nil
+                    tray[i] = copy
+                }
+            }
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } catch {
+            self.error = error.localizedDescription
+        }
     }
 
     /// "Recognizing…" / what to do, at the top of the live view.
@@ -588,7 +664,7 @@ struct MealScannerView: View {
 
             var added = false
             for item in found {
-                if let box = item.box, let spot = camera.anchor(box, from: arFrame) {
+                if let rough = item.box, let spot = camera.anchor(camera.refine(rough, in: frame), from: arFrame) {
                     // The same food already found nearby: keep the first one.
                     let duplicate = liveItems.contains { known in
                         known.label == item.label && (camera.center(of: known.id).map { simd_distance($0, spot.center) < 0.2 } ?? false)
@@ -669,6 +745,8 @@ private struct ResultCanvas: View {
     let image: UIImage
     @Binding var drafts: [FoodDraft]
     let analyzing: Bool
+    /// Long-press a frame: "this is actually…".
+    let onCorrect: (FoodDraft) -> Void
     @State private var pulse = false
 
     var body: some View {
@@ -711,7 +789,10 @@ private struct ResultCanvas: View {
                         .position(x: r.midX, y: r.midY)
                         .accessibilityLabel("\(draft.label), \(Int(safe: draft.grams)) גרם, \(Int(safe: draft.kcal)) קלוריות")
                         .accessibilityValue(draft.include ? "נבחר" : "לא נבחר")
-                        .accessibilityHint("הקש כדי לבחור או לבטל")
+                        .accessibilityHint("הקש כדי לבחור או לבטל. לחיצה ארוכה לתיקון")
+                        .contextMenu {
+                            Button { onCorrect(draft) } label: { Label("זה בעצם…", systemImage: "pencil") }
+                        }
                     }
                 }
             }

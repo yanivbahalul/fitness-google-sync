@@ -233,16 +233,20 @@ struct EnergyCard: View {
     @ObservedObject private var food = FoodLog.shared
     @AppStorage(AppSettings.deficitGoalKey) private var goal = 500
     @State private var burned: Int?
-    @State private var typicalBurn: Int?
+    @State private var typicalBurn: Int? = EnergyCard.cachedTypicalBurn
+    /// Last known "typical day" burn, so the number doesn't change after the first load.
+    private static var cachedTypicalBurn: Int?
     @State private var otherApps = 0
-    @State private var loading = false
+    @State private var loading = true
 
     private var isToday: Bool { Calendar.current.isDateInToday(day) }
 
     var body: some View {
         let entries = food.entries(on: day)
         let eaten = Int(safe: entries.map(\.kcal).reduce(0, +).rounded()) + otherApps
-        let expectedBurn = isToday ? (typicalBurn ?? burned) : burned
+        // Today's target uses a typical day's burn; until that is known, show nothing rather
+        // than a number that changes a moment later.
+        let expectedBurn = isToday ? typicalBurn : burned
         let target = expectedBurn.map { max(0, $0 - goal) }
         let left = target.map { $0 - eaten }
 
@@ -250,7 +254,7 @@ struct EnergyCard: View {
             // Calories left to eat today.
             HStack(spacing: 16) {
                     VStack(alignment: .leading, spacing: 4) {
-                        if loading && target == nil {
+                        if target == nil && loading {
                             ProgressView()
                         } else {
                             Text(left.map { abs($0).formatted() } ?? "—")
@@ -282,22 +286,6 @@ struct EnergyCard: View {
                       target: target.map { Double($0) * 0.30 / 9 }, symbol: "drop.fill", color: .yellow)
             }
 
-            if let burned {
-                let deficit = burned - eaten
-                HStack(spacing: 6) {
-                    Image(systemName: "flame.fill").foregroundStyle(ChartColors.orange)
-                    Text("נשרפו \(burned.formatted())\(isToday ? " עד עכשיו" : "") · \(deficit >= 0 ? "גרעון" : "עודף") \(abs(deficit).formatted()) · יעד גרעון \(goal.formatted())")
-                }
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityElement(children: .combine)
-            } else if !loading {
-                Text("אין עדיין נתון של קלוריות שנשרפו מ‑Google ליום הזה.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
         }
         // Reload after every sync too, not only when the day changes.
         .task(id: "\(day.timeIntervalSince1970)-\(sync.lastSyncDate?.timeIntervalSince1970 ?? 0)") {
@@ -307,7 +295,8 @@ struct EnergyCard: View {
             if isToday {
                 let today = Calendar.current.startOfDay(for: Date())
                 let past = await sync.dailyBurned(days: 8).filter { $0.key < today }.map(\.value)
-                typicalBurn = past.isEmpty ? nil : Int(safe: (past.reduce(0, +) / Double(past.count)).rounded())
+                typicalBurn = past.isEmpty ? burned : Int(safe: (past.reduce(0, +) / Double(past.count)).rounded())
+                Self.cachedTypicalBurn = typicalBurn
             }
             loading = false
         }
