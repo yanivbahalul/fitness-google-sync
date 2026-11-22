@@ -48,6 +48,16 @@ extension View {
         background(Color(.systemGroupedBackground).ignoresSafeArea())
     }
 
+    /// Main screens: a soft accent glow at the top fading into the page background.
+    func appBackground() -> some View {
+        background(
+            LinearGradient(colors: [Theme.accent.opacity(0.28), Color(.systemGroupedBackground)],
+                           startPoint: .top, endPoint: .init(x: 0.5, y: 0.45))
+                .background(Color(.systemGroupedBackground))
+                .ignoresSafeArea()
+        )
+    }
+
     /// Right-to-left Hebrew layout, Hebrew dates and the accent tint, for screens and sheets.
     func appChrome() -> some View {
         environment(\.layoutDirection, .rightToLeft)

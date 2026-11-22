@@ -1,33 +1,58 @@
 import SwiftUI
 
+/// The app's main tabs (bottom bar).
+enum MainTab: String, CaseIterable {
+    case today, activity, progress
+
+    var title: String {
+        switch self {
+        case .today: return "היום"
+        case .activity: return "פעילות"
+        case .progress: return "התקדמות"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .today: return "house.fill"
+        case .activity: return "figure.walk"
+        case .progress: return "chart.bar.fill"
+        }
+    }
+}
+
+/// Other ways to add food, opened from the scanner.
+enum AddMode: String, Identifiable {
+    case search, barcode
+    var id: String { rawValue }
+}
+
 struct ContentView: View {
     @EnvironmentObject private var auth: GoogleAuthManager
     @EnvironmentObject private var sync: SyncCoordinator
     @State private var showSettings = false
     @State private var showHistory = false
-    /// 0 = activity, 1 = nutrition. Swipe sideways or tap the switcher.
-    @AppStorage("mainPage") private var page = 0
+    @AppStorage("mainTab") private var tab: MainTab = .today
+    /// The day shown on the Today tab (never in the future).
+    @State private var day = Calendar.current.startOfDay(for: Date())
+    @State private var scanning = false
+    @State private var addMode: AddMode?
+    @State private var pendingMode: AddMode?
 
     var body: some View {
         NavigationStack {
             Group {
                 if auth.isSignedIn {
                     VStack(spacing: 0) {
-                        Picker("מסך", selection: $page) {
-                            Label("פעילות", systemImage: "figure.walk").tag(0)
-                            Label("תזונה", systemImage: "fork.knife").tag(1)
-                        }
-                        .pickerStyle(.segmented)
-                        .padding(.horizontal, DS.pagePadding)
-                        .padding(.vertical, 8)
-
                         SyncBanner()
-
-                        TabView(selection: $page) {
-                            ActivityPage().tag(0)
-                            NutritionPage().tag(1)
+                        switch tab {
+                        case .today: NutritionPage(day: $day)
+                        case .activity: ActivityPage()
+                        case .progress: ProgressPage()
                         }
-                        .tabViewStyle(.page(indexDisplayMode: .never))
+                    }
+                    .safeAreaInset(edge: .bottom) {
+                        BottomBar(tab: $tab) { scanning = true }
                     }
                 } else {
                     ScrollView {
@@ -35,7 +60,7 @@ struct ContentView: View {
                     }
                 }
             }
-            .pageBackground()
+            .appBackground()
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -60,8 +85,68 @@ struct ContentView: View {
             }
             .sheet(isPresented: $showSettings) { SettingsView() }
             .sheet(isPresented: $showHistory) { HistoryView() }
+            .fullScreenCover(isPresented: $scanning, onDismiss: {
+                // Search or barcode chosen inside the scanner opens once it has closed.
+                if let mode = pendingMode { pendingMode = nil; addMode = mode }
+            }) {
+                MealScannerView(day: day) { mode in
+                    pendingMode = mode
+                    scanning = false
+                }
+            }
+            .sheet(item: $addMode) { mode in
+                switch mode {
+                case .search: FoodSearchView(day: day)
+                case .barcode: BarcodeAddView(day: day)
+                }
+            }
         }
         .appChrome()
+    }
+}
+
+/// Floating tab bar with a separate round "+" that opens the meal scanner.
+private struct BottomBar: View {
+    @Binding var tab: MainTab
+    let onAdd: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button(action: onAdd) {
+                Image(systemName: "plus")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 64, height: 64)
+                    .background(Theme.accent, in: Circle())
+                    .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
+            }
+            .accessibilityLabel("הוסף אוכל")
+            .accessibilityHint("פותח את סורק הארוחות")
+
+            HStack(spacing: 4) {
+                ForEach(MainTab.allCases, id: \.self) { item in
+                    Button {
+                        tab = item
+                    } label: {
+                        VStack(spacing: 3) {
+                            Image(systemName: item.symbol).font(.title3)
+                            Text(item.title).font(.caption2.weight(.semibold)).lineLimit(1)
+                        }
+                        .foregroundStyle(tab == item ? Theme.accent : Color.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                        .background(tab == item ? Theme.accent.opacity(0.15) : .clear, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(item.title)
+                    .accessibilityAddTraits(tab == item ? [.isButton, .isSelected] : .isButton)
+                }
+            }
+            .padding(6)
+            .background(.regularMaterial, in: Capsule())
+            .shadow(color: .black.opacity(0.15), radius: 10, y: 4)
+        }
+        .padding(.horizontal, DS.pagePadding)
+        .padding(.bottom, 6)
     }
 }
 
@@ -154,40 +239,75 @@ struct EnergyCard: View {
 
     private var isToday: Bool { Calendar.current.isDateInToday(day) }
 
+    @State private var showEaten = false
+
     var body: some View {
         let entries = food.entries(on: day)
         let eaten = Int(safe: entries.map(\.kcal).reduce(0, +).rounded()) + otherApps
         let expectedBurn = isToday ? (typicalBurn ?? burned) : burned
         let target = expectedBurn.map { max(0, $0 - goal) }
+        let left = target.map { $0 - eaten }
 
-        Card {
-            HStack(spacing: 20) {
-                ring(eaten: eaten, target: target)
-                VStack(alignment: .leading, spacing: 10) {
-                    figure("נאכלו", eaten, symbol: "fork.knife")
-                    figure("יעד אכילה", target, symbol: "target")
-                    figure(isToday ? "נשרפו עד עכשיו" : "נשרפו", burned, symbol: "flame.fill")
+        VStack(spacing: 12) {
+            // Calories: what's left (tap to see what was eaten instead).
+            Button { showEaten.toggle() } label: {
+                HStack(spacing: 16) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if loading && target == nil {
+                            ProgressView()
+                        } else {
+                            Text(showEaten ? eaten.formatted() : (left.map { abs($0).formatted() } ?? "—"))
+                                .font(.system(size: 48, weight: .bold, design: .rounded))
+                                .monospacedDigit()
+                                .minimumScaleFactor(0.5)
+                                .lineLimit(1)
+                        }
+                        Text(showEaten ? "קלוריות נאכלו" : ((left ?? 0) < 0 ? "קלוריות מעל היעד" : "קלוריות נותרו"))
+                            .font(.title3.weight(.semibold))
+                        Text("הקש להחלפה")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    ring(eaten: eaten, target: target)
                 }
-                Spacer(minLength: 0)
+                .padding(DS.cardPadding)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(.secondarySystemGroupedBackground),
+                            in: RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous))
             }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(showEaten
+                ? "נאכלו \(eaten) קלוריות"
+                : left.map { $0 < 0 ? "\(-$0) קלוריות מעל היעד" : "נותרו \($0) קלוריות" } ?? "אין עדיין יעד")
+            .accessibilityHint("הקש כדי להחליף בין נותרו לנאכלו")
 
-            HStack(spacing: 8) {
-                macro("חלבון", entries.map(\.protein).reduce(0, +))
-                macro("פחמימות", entries.map(\.carbs).reduce(0, +))
-                macro("שומן", entries.map(\.fat).reduce(0, +))
+            // Macros left, from a 30 / 40 / 30 split of the calorie target.
+            HStack(spacing: 10) {
+                macro("חלבון", eaten: entries.map(\.protein).reduce(0, +),
+                      target: target.map { Double($0) * 0.30 / 4 }, symbol: "fish.fill", color: .pink)
+                macro("פחמימות", eaten: entries.map(\.carbs).reduce(0, +),
+                      target: target.map { Double($0) * 0.40 / 4 }, symbol: "leaf.fill", color: .orange)
+                macro("שומן", eaten: entries.map(\.fat).reduce(0, +),
+                      target: target.map { Double($0) * 0.30 / 9 }, symbol: "drop.fill", color: .yellow)
             }
 
             if let burned {
                 let deficit = burned - eaten
-                Text(deficit >= 0
-                     ? "גרעון \(isToday ? "עד עכשיו" : "ביום הזה"): \(deficit.formatted()) קק\"ל · יעד \(goal.formatted())"
-                     : "עודף \(isToday ? "עד עכשיו" : "ביום הזה"): \((-deficit).formatted()) קק\"ל")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Image(systemName: "flame.fill").foregroundStyle(ChartColors.orange)
+                    Text("נשרפו \(burned.formatted())\(isToday ? " עד עכשיו" : "") · \(deficit >= 0 ? "גרעון" : "עודף") \(abs(deficit).formatted()) · יעד גרעון \(goal.formatted())")
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .combine)
             } else if !loading {
                 Text("אין עדיין נתון של קלוריות שנשרפו מ‑Google ליום הזה.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         // Reload after every sync too, not only when the day changes.
@@ -204,69 +324,50 @@ struct EnergyCard: View {
         }
     }
 
-    /// Ring filled by what was eaten out of the target, with what's left in the middle.
+    /// Ring filled by what was eaten out of the target, with a flame in the middle.
     private func ring(eaten: Int, target: Int?) -> some View {
         let fraction = target.map { $0 > 0 ? min(Double(eaten) / Double($0), 1) : 0 } ?? 0
-        let left = target.map { $0 - eaten }
-        let over = (left ?? 0) < 0
+        let over = target.map { eaten > $0 } ?? false
         return ZStack {
-            Circle().stroke(Theme.accent.opacity(0.15), lineWidth: 14)
+            Circle().stroke(ChartColors.orange.opacity(0.2), lineWidth: 10)
             Circle()
                 .trim(from: 0, to: fraction)
-                .stroke(over ? ChartColors.orange : Theme.accent, style: StrokeStyle(lineWidth: 14, lineCap: .round))
+                .stroke(over ? Color.red : ChartColors.orange, style: StrokeStyle(lineWidth: 10, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-            VStack(spacing: 0) {
-                if loading && target == nil {
-                    ProgressView()
-                } else if let left {
-                    Text(abs(left).formatted())
-                        .font(.title.bold())
-                        .monospacedDigit()
-                        .minimumScaleFactor(0.6)
-                        .lineLimit(1)
-                    Text(over ? "מעל היעד" : "נשארו")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("—").font(.title.bold())
-                }
-            }
-            .padding(16)
+            Image(systemName: "flame.fill")
+                .font(.title)
+                .foregroundStyle(ChartColors.orange)
         }
-        .frame(width: 132, height: 132)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(left.map { over ? "\(abs($0)) קלוריות מעל היעד" : "נשארו \($0) קלוריות ליעד" } ?? "אין עדיין יעד")
+        .frame(width: 96, height: 96)
+        .accessibilityHidden(true)
     }
 
-    private func figure(_ title: String, _ value: Int?, symbol: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: symbol)
-                .foregroundStyle(Theme.accent)
-                .frame(width: 20)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 0) {
-                Text(value.map { $0.formatted() } ?? "—")
-                    .font(.headline)
-                    .monospacedDigit()
-                Text(title)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+    private func macro(_ title: String, eaten: Double, target: Double?, symbol: String, color: Color) -> some View {
+        let left = target.map { $0 - eaten }
+        let fraction = target.map { $0 > 0 ? min(eaten / $0, 1) : 0 } ?? 0
+        return VStack(spacing: 8) {
+            ZStack {
+                Circle().stroke(color.opacity(0.2), lineWidth: 5)
+                Circle()
+                    .trim(from: 0, to: fraction)
+                    .stroke(color, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                Image(systemName: symbol).font(.subheadline).foregroundStyle(color)
             }
-        }
-        .accessibilityElement(children: .combine)
-    }
-
-    private func macro(_ title: String, _ grams: Double) -> some View {
-        VStack(spacing: 2) {
-            Text("\(Int(safe: grams.rounded())) ג׳")
-                .font(.subheadline.weight(.semibold))
+            .frame(width: 48, height: 48)
+            Text(left.map { "\(Int(safe: abs($0).rounded()))ג׳" } ?? "\(Int(safe: eaten.rounded()))ג׳")
+                .font(.headline)
                 .monospacedDigit()
-            Text(title)
+            Text(left.map { $0 < 0 ? "\(title) מעל" : "\(title) נותרו" } ?? title)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
         }
-        .frame(maxWidth: .infinity, minHeight: DS.minTap)
-        .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: DS.tileRadius, style: .continuous))
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity)
+        .background(Color(.secondarySystemGroupedBackground),
+                    in: RoundedRectangle(cornerRadius: DS.cardRadius, style: .continuous))
         .accessibilityElement(children: .combine)
     }
 }

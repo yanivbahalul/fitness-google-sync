@@ -63,6 +63,8 @@ struct FoodDraft: Identifiable, Equatable {
     var portionNote: String?
     /// The analysis wasn't sure about this item; worth checking before saving.
     var lowConfidence = false
+    /// Where the food is in the photo (fractions of the image, top-left origin), if known.
+    var box: CGRect? = nil
 
     var kcal: Double { (food?.kcal ?? kcalPer100) * grams / 100 }
     var protein: Double { (food?.protein ?? proteinPer100) * grams / 100 }

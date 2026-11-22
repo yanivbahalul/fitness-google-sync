@@ -2,35 +2,40 @@ import Charts
 import PhotosUI
 import SwiftUI
 
-/// The nutrition screen: today's balance, adding food, today's diary and progress over time.
+/// The Today tab: the week strip, what's left to eat, and today's meals.
 struct NutritionPage: View {
-    @EnvironmentObject private var sync: SyncCoordinator
-    @ObservedObject private var food = FoodLog.shared
-    @StateObject private var progress = ProgressModel()
-    @Environment(\.scenePhase) private var scenePhase
-    /// The day being viewed/edited (never in the future).
-    @State private var day = Calendar.current.startOfDay(for: Date())
+    @Binding var day: Date
 
     var body: some View {
         ScrollView {
             VStack(spacing: DS.cardSpacing) {
-                DayNavigator(day: $day)
+                WeekStrip(day: $day)
                 EnergyCard(day: day)
-                AddFoodCard(day: day)
                 DiaryCard(day: day)
-                ProgressSection(progress: progress)
             }
             .padding(.horizontal, DS.pagePadding)
             .padding(.bottom, 24)
         }
+    }
+}
+
+/// The Progress tab: weight, eaten vs burned, expected vs actual, macros.
+struct ProgressPage: View {
+    @EnvironmentObject private var sync: SyncCoordinator
+    @ObservedObject private var food = FoodLog.shared
+    @StateObject private var progress = ProgressModel()
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        ScrollView {
+            ProgressSection(progress: progress)
+                .padding(.horizontal, DS.pagePadding)
+                .padding(.bottom, 24)
+        }
         .task { await progress.refresh(sync: sync, food: food) }
         .refreshable { await progress.refresh(sync: sync, food: food) }
-        .onChange(of: food.entries) { _ in
-            Task { await progress.refresh(sync: sync, food: food) }
-        }
-        .onChange(of: sync.lastSyncDate) { _ in
-            Task { await progress.refresh(sync: sync, food: food) }
-        }
+        .onChange(of: food.entries) { _ in Task { await progress.refresh(sync: sync, food: food) } }
+        .onChange(of: sync.lastSyncDate) { _ in Task { await progress.refresh(sync: sync, food: food) } }
         .onChange(of: scenePhase) { phase in
             guard phase == .active else { return }
             Task { await progress.refresh(sync: sync, food: food) }
@@ -38,181 +43,76 @@ struct NutritionPage: View {
     }
 }
 
-/// ‹ day › switcher with a date picker. Can't go past today.
-private struct DayNavigator: View {
+/// The last 7 days as tappable pills (today at the start), plus a calendar for earlier days.
+private struct WeekStrip: View {
     @Binding var day: Date
+    @State private var picking = false
     private let calendar = Calendar.current
 
-    private var isToday: Bool { calendar.isDateInToday(day) }
+    private var days: [Date] {
+        let today = calendar.startOfDay(for: Date())
+        return (0..<7).map { calendar.date(byAdding: .day, value: -$0, to: today)! }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(title).font(.title2.bold())
+                Spacer()
+                Button { picking = true } label: {
+                    Image(systemName: "calendar")
+                        .font(.title3)
+                        .frame(width: DS.minTap, height: DS.minTap)
+                }
+                .accessibilityLabel("בחר תאריך")
+            }
+            HStack(spacing: 6) {
+                ForEach(days, id: \.self) { d in
+                    let selected = calendar.isDate(d, inSameDayAs: day)
+                    Button { day = d } label: {
+                        VStack(spacing: 4) {
+                            Text(d.formatted(.dateTime.weekday(.narrow).locale(.he)))
+                                .font(.caption.weight(.semibold))
+                            Text(d.formatted(.dateTime.day().locale(.he)))
+                                .font(.headline)
+                                .monospacedDigit()
+                            Circle()
+                                .fill(FoodLog.shared.entries(on: d).isEmpty ? Color.clear : Theme.accent)
+                                .frame(width: 5, height: 5)
+                        }
+                        .foregroundStyle(selected ? Color.primary : Color.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 64)
+                        .background(selected ? Color(.secondarySystemGroupedBackground) : Color(.tertiarySystemFill).opacity(0.5),
+                                    in: Capsule())
+                        .overlay(Capsule().stroke(selected ? Theme.accent : .clear, lineWidth: 2))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(d.formatted(.dateTime.weekday(.wide).day().month().locale(.he)))
+                    .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+                }
+            }
+        }
+        .sheet(isPresented: $picking) {
+            NavigationStack {
+                DatePicker("תאריך", selection: Binding(
+                    get: { day },
+                    set: { day = calendar.startOfDay(for: min($0, Date())); picking = false }
+                ), in: ...Date(), displayedComponents: .date)
+                .datePickerStyle(.graphical)
+                .padding()
+                .navigationTitle("בחר יום")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("סגור") { picking = false } } }
+            }
+            .presentationDetents([.medium])
+            .appChrome()
+        }
+    }
 
     private var title: String {
-        if isToday { return "היום" }
+        if calendar.isDateInToday(day) { return "היום" }
         if calendar.isDateInYesterday(day) { return "אתמול" }
         return day.formatted(.dateTime.weekday(.wide).day().month().locale(.he))
-    }
-
-    var body: some View {
-        HStack(spacing: 12) {
-            // RTL: "previous day" sits on the right, pointing right.
-            Button { move(-1) } label: {
-                Image(systemName: "chevron.right").font(.headline).frame(width: 44, height: 44)
-            }
-            .accessibilityLabel("יום קודם")
-
-            Spacer()
-            VStack(spacing: 2) {
-                Text(title).font(.headline)
-                DatePicker("בחר תאריך", selection: Binding(
-                    get: { day },
-                    set: { day = calendar.startOfDay(for: min($0, Date())) }
-                ), in: ...Date(), displayedComponents: .date)
-                .labelsHidden()
-                .datePickerStyle(.compact)
-            }
-            Spacer()
-
-            Button { move(1) } label: {
-                Image(systemName: "chevron.left").font(.headline).frame(width: 44, height: 44)
-            }
-            .disabled(isToday)
-            .accessibilityLabel("יום הבא")
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(alignment: .bottom) {
-            if !isToday {
-                Button("חזרה להיום") { day = calendar.startOfDay(for: Date()) }
-                    .font(.caption.weight(.semibold))
-                    .offset(y: 18)
-            }
-        }
-        .padding(.bottom, isToday ? 0 : 14)
-    }
-
-    private func move(_ delta: Int) {
-        guard let next = calendar.date(byAdding: .day, value: delta, to: day),
-              next <= calendar.startOfDay(for: Date()) else { return }
-        day = next
-    }
-}
-
-// MARK: - Add food
-
-private enum AddMode: String, Identifiable {
-    case photo, text, search, barcode
-    var id: String { rawValue }
-}
-
-/// Logging first: one big photo button (the fastest way, as in the leading calorie apps),
-/// the other ways in one row, and recently eaten foods to log again with one tap.
-private struct AddFoodCard: View {
-    let day: Date
-    @ObservedObject private var food = FoodLog.shared
-    @State private var mode: AddMode?
-    @State private var quickAdd = false
-    @State private var quickText = ""
-    @State private var justAdded: String?
-
-    var body: some View {
-        Card {
-            PrimaryButton(title: Calendar.current.isDateInToday(day) ? "צלם ארוחה" : "צלם ארוחה ל‑\(day.formatted(.dateTime.day().month().locale(.he)))",
-                          symbol: "camera.fill") { mode = .photo }
-
-            HStack(spacing: 8) {
-                AddButton(title: "חיפוש", symbol: "magnifyingglass") { mode = .search }
-                AddButton(title: "ברקוד", symbol: "barcode.viewfinder") { mode = .barcode }
-                AddButton(title: "תיאור", symbol: "text.bubble.fill") { mode = .text }
-                AddButton(title: "קלוריות", symbol: "bolt.fill") { quickText = ""; quickAdd = true }
-            }
-
-            let recent = food.recentFoods(limit: 10)
-            if !recent.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("אכלת לאחרונה").font(.subheadline.weight(.semibold))
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(recent) { entry in
-                                Button {
-                                    Task {
-                                        await food.relog(entry, at: FoodLog.entryDate(for: day))
-                                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                                        justAdded = entry.name
-                                    }
-                                } label: {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(entry.name).font(.subheadline).lineLimit(1)
-                                        Text([entry.grams.map { "\(Int(safe: $0)) ג׳" }, "\(Int(safe: entry.kcal)) קק\"ל"]
-                                                .compactMap { $0 }.joined(separator: " · "))
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    .padding(.horizontal, 12)
-                                    .frame(maxWidth: 200, minHeight: 52, alignment: .leading)
-                                    .background(Color(.tertiarySystemFill),
-                                                in: RoundedRectangle(cornerRadius: DS.tileRadius, style: .continuous))
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel("הוסף שוב \(entry.name), \(Int(safe: entry.kcal)) קלוריות")
-                            }
-                        }
-                    }
-                    if let justAdded {
-                        Label("נוסף: \(justAdded)", systemImage: "checkmark.circle.fill")
-                            .font(.caption)
-                            .foregroundStyle(.green)
-                            .task(id: justAdded) {
-                                try? await Task.sleep(nanoseconds: 2_500_000_000)
-                                self.justAdded = nil
-                            }
-                    }
-                }
-            }
-        }
-        .sheet(item: $mode) { mode in
-            switch mode {
-            case .photo: PhotoAnalyzeView(day: day)
-            case .text: TextAnalyzeView(day: day)
-            case .search: FoodSearchView(day: day)
-            case .barcode: BarcodeAddView(day: day)
-            }
-        }
-        .alert("הוספת קלוריות", isPresented: $quickAdd) {
-            TextField("קלוריות", text: $quickText).keyboardType(.numberPad)
-            Button("הוסף") {
-                if let kcal = Double(quickText.filter(\.isNumber)), kcal > 0 {
-                    Task { await FoodLog.shared.addQuick(kcal: kcal, at: FoodLog.entryDate(for: day)) }
-                }
-            }
-            Button("ביטול", role: .cancel) {}
-        } message: {
-            Text("מספר קלוריות בלבד, בלי פירוט.")
-        }
-    }
-}
-
-private struct AddButton: View {
-    let title: String
-    let symbol: String
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 4) {
-                Image(systemName: symbol)
-                    .font(.title3)
-                    .foregroundStyle(Theme.accent)
-                Text(title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-            }
-            .frame(maxWidth: .infinity, minHeight: 64)
-            .background(Color(.tertiarySystemFill), in: RoundedRectangle(cornerRadius: DS.tileRadius, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("הוסף אוכל: \(title)")
     }
 }
 
@@ -244,14 +144,14 @@ private struct DiaryCard: View {
         let entries = food.entries(on: day)
         let isToday = Calendar.current.isDateInToday(day)
         Card {
-            CardHeader(title: isToday ? "היומן של היום" : "יומן", symbol: "list.bullet") {
+            CardHeader(title: isToday ? "הארוחות של היום" : "הארוחות", symbol: "fork.knife") {
                 Text("\(Int(safe: entries.map(\.kcal).reduce(0, +)).formatted()) קק\"ל")
                     .font(.subheadline.weight(.semibold))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
             if entries.isEmpty {
-                Text(isToday ? "עדיין לא נרשם אוכל היום." : "לא נרשם אוכל ביום הזה.")
+                Text(isToday ? "עדיין לא נרשם אוכל היום. הקש על + כדי לצלם ארוחה." : "לא נרשם אוכל ביום הזה.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
@@ -276,9 +176,44 @@ private struct DiaryCard: View {
                     }
                 }
             }
+            recents
             if let error = food.lastError {
                 Notice(symbol: "exclamationmark.triangle.fill", color: .red, text: error)
             }
+        }
+    }
+
+    /// Recently eaten foods: one tap logs them again on this day.
+    @ViewBuilder private var recents: some View {
+        let recent = food.recentFoods(limit: 10)
+        if !recent.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("הוסף שוב").font(.subheadline.weight(.semibold))
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(recent) { entry in
+                            Button {
+                                Task {
+                                    await food.relog(entry, at: FoodLog.entryDate(for: day))
+                                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                                }
+                            } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(entry.name).font(.subheadline).lineLimit(1)
+                                    Text("\(Int(safe: entry.kcal)) קק\"ל").font(.caption).foregroundStyle(.secondary)
+                                }
+                                .padding(.horizontal, 12)
+                                .frame(maxWidth: 180, minHeight: 52, alignment: .leading)
+                                .background(Color(.tertiarySystemFill),
+                                            in: RoundedRectangle(cornerRadius: DS.tileRadius, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("הוסף שוב \(entry.name), \(Int(safe: entry.kcal)) קלוריות")
+                        }
+                    }
+                }
+            }
+            .padding(.top, 4)
         }
     }
 
@@ -353,8 +288,10 @@ private struct ProgressSection: View {
 
             WeightCard(progress: progress, goalWeight: $goalWeight)
             BalanceCard(progress: progress)
+            ActivitySummaryCard(progress: progress)
             ExpectedVsActualCard(progress: progress)
             MacrosCard(progress: progress)
+            if let bmi = progress.bmi { BMICard(bmi: bmi) }
         }
     }
 }
@@ -385,15 +322,36 @@ private struct WeightCard: View {
 
     var body: some View {
         Card {
-            CardHeader(title: "משקל", symbol: "scalemass.fill")
-            Headline(text: headline.0, detail: headline.1)
+            HStack(alignment: .firstTextBaseline) {
+                Text("משקל").font(.title3.bold())
+                Spacer()
+                if let rate = progress.weeklyRate {
+                    Text("\(kg(rate, sign: true)) בשבוע")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(rate <= 0 ? .green : .orange)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
+
+            if let current = progress.currentWeight {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(String(format: "%.1f", current))
+                        .font(.system(size: 56, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                    Text("ק״ג").font(.title3).foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .accessibilityElement(children: .combine)
+                Text([progress.lastWeighIn.map { "שקילה אחרונה \(shortDate($0))" }, headline.0]
+                        .compactMap { $0 }.joined(separator: " · "))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else {
+                Headline(text: headline.0, detail: headline.1)
+            }
 
             if !progress.weights.isEmpty {
-                HStack(spacing: 8) {
-                    StatTile(title: "המשקל עכשיו", value: progress.currentWeight.map { kg($0) } ?? "—")
-                    StatTile(title: "קצב בשבוע", value: progress.weeklyRate.map { kg($0, sign: true) } ?? "—")
-                }
-
                 Chart {
                     ForEach(progress.weights) { p in
                         PointMark(x: .value("תאריך", p.date), y: .value("משקל", p.kg))
@@ -446,6 +404,22 @@ private struct WeightCard: View {
                     LegendItem(color: ChartColors.blue.opacity(0.35), text: "שקילה")
                     if goalVisible { LegendItem(color: ChartColors.reference, text: "יעד", dashed: true) }
                 }
+            }
+
+            if goalWeight > 0, let start = progress.startWeight, let current = progress.currentWeight, start != goalWeight {
+                let done = min(max((start - current) / (start - goalWeight), 0), 1)
+                VStack(spacing: 6) {
+                    ProgressView(value: done).tint(.green)
+                    HStack {
+                        Text("התחלה \(String(format: "%.1f", start))")
+                        Spacer()
+                        Text("יעד \(String(format: "%.1f", goalWeight))")
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("התקדמות ליעד: \(Int(safe: done * 100)) אחוז")
             }
 
             Divider()
@@ -614,5 +588,125 @@ private struct MacrosCard: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Activity summary
+
+/// Average steps and calories burned per day in the range, with a small bar per day.
+private struct ActivitySummaryCard: View {
+    @ObservedObject var progress: ProgressModel
+
+    var body: some View {
+        Card {
+            Text("פעילות").font(.title3.bold()).accessibilityAddTraits(.isHeader)
+            row(title: "צעדים", symbol: "figure.walk", unit: "ביום", color: ChartColors.blue,
+                values: progress.dailySteps.map(\.value))
+            Divider()
+            row(title: "שריפה", symbol: "flame.fill", unit: "קק״ל ביום", color: ChartColors.orange,
+                values: progress.dailyBurn.map(\.value))
+        }
+    }
+
+    private func row(title: String, symbol: String, unit: String, color: Color, values: [Double]) -> some View {
+        let avg = values.isEmpty ? nil : values.reduce(0, +) / Double(values.count)
+        let recent = Array(values.suffix(14))
+        let top = max(recent.max() ?? 1, 1)
+        return HStack(alignment: .bottom) {
+            VStack(alignment: .leading, spacing: 2) {
+                Label(title, systemImage: symbol)
+                    .font(.subheadline)
+                    .foregroundStyle(color)
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(avg.map { Int(safe: $0.rounded()).formatted() } ?? "—")
+                        .font(.system(size: 34, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                    Text(unit).font(.subheadline).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            HStack(alignment: .bottom, spacing: 3) {
+                ForEach(Array(recent.enumerated()), id: \.offset) { _, v in
+                    Capsule()
+                        .fill(color)
+                        .frame(width: 5, height: max(4, 44 * v / top))
+                }
+            }
+            .frame(height: 44, alignment: .bottom)
+            .environment(\.layoutDirection, .leftToRight)
+            .accessibilityHidden(true)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title): ממוצע \(avg.map { Int(safe: $0.rounded()) } ?? 0) \(unit)")
+    }
+}
+
+// MARK: - BMI
+
+/// Body-mass index from the latest weigh-in and the height in Apple Health.
+private struct BMICard: View {
+    let bmi: Double
+    @State private var showInfo = false
+
+    private var category: (String, Color) {
+        switch bmi {
+        case ..<18.5: return ("תת משקל", .blue)
+        case ..<25: return ("משקל תקין", .green)
+        case ..<30: return ("עודף משקל", .orange)
+        default: return ("השמנה", .red)
+        }
+    }
+
+    var body: some View {
+        Card {
+            HStack {
+                Text("BMI").font(.title3.bold())
+                Spacer()
+                Button { showInfo.toggle() } label: {
+                    Image(systemName: "info.circle").frame(width: DS.minTap, height: DS.minTap)
+                }
+                .accessibilityLabel("מה זה BMI")
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(String(format: "%.1f", bmi))
+                    .font(.system(size: 48, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                Text(category.0).font(.headline).foregroundStyle(category.1)
+                Spacer()
+            }
+            .accessibilityElement(children: .combine)
+            scale
+            if showInfo {
+                Text("מדד מסת גוף: משקל בק״ג חלקי הגובה במטרים בריבוע. מדד כללי בלבד; הוא לא מבחין בין שריר לשומן.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// Four colored ranges (15-18.5-25-30-40) with a marker at the value.
+    private var scale: some View {
+        let lo = 15.0, hi = 40.0
+        let bands: [(Double, Double, Color)] = [(lo, 18.5, .blue), (18.5, 25, .green), (25, 30, .orange), (30, hi, .red)]
+        return GeometryReader { geo in
+            let w = geo.size.width
+            ZStack(alignment: .leading) {
+                ForEach(Array(bands.enumerated()), id: \.offset) { _, band in
+                    Capsule()
+                        .fill(band.2.opacity(0.7))
+                        .frame(width: max(0, w * (band.1 - band.0) / (hi - lo) - 4), height: 8)
+                        .offset(x: w * (band.0 - lo) / (hi - lo))
+                }
+                Circle()
+                    .fill(.white)
+                    .overlay(Circle().stroke(Color.secondary, lineWidth: 2))
+                    .frame(width: 18, height: 18)
+                    .offset(x: w * (min(max(bmi, lo), hi) - lo) / (hi - lo) - 9)
+            }
+            .frame(height: 20)
+        }
+        .frame(height: 20)
+        .environment(\.layoutDirection, .leftToRight)
+        .accessibilityHidden(true)
     }
 }
