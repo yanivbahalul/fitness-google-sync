@@ -198,7 +198,11 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
         let fitting = objects.filter { o in
             o.box.width * o.box.height <= area * 2.5 && (o.box.contains(center) || overlap(o.box, box) > 0.15)
         }
-        return fitting.max { overlap($0.box, box) < overlap($1.box, box) } ?? ObjectShape(box: box)
+        guard var best = fitting.max(by: { overlap($0.box, box) < overlap($1.box, box) }) else { return ObjectShape(box: box) }
+        // Only trust the outline when the object found is clearly the one the model meant;
+        // otherwise (cluttered scene, two things merged) the shape would be off: frame only.
+        if overlap(best.box, box) < 0.35 { best.outline = [] }
+        return best
     }
 
     /// The separate objects in an image (fractions, top-left origin): per-object
@@ -214,6 +218,27 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
             ObjectShape(box: CGRect(x: o.boundingBox.minX, y: 1 - o.boundingBox.maxY,
                                     width: o.boundingBox.width, height: o.boundingBox.height))
         }
+    }
+
+    /// Words printed in the image (brand names on wrappers, labels), biggest first, read
+    /// on the phone. Helps tell a Twix from a Mars, which look alike.
+    static func readText(_ image: UIImage) -> [String] {
+        guard let cg = image.cgImage else { return [] }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try? VNImageRequestHandler(cgImage: cg, options: [:]).perform([request])
+        let words = (request.results ?? [])
+            .compactMap { o -> (String, CGFloat)? in
+                guard let best = o.topCandidates(1).first, best.confidence >= 0.4 else { return nil }
+                let text = best.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard text.count >= 3, text.contains(where: \.isLetter) else { return nil }
+                return (text, o.boundingBox.height)
+            }
+            .sorted { $0.1 > $1.1 }
+            .map(\.0)
+        var seen = Set<String>()
+        return Array(words.filter { seen.insert($0.lowercased()).inserted }.prefix(6))
     }
 
     // MARK: Visual memory
@@ -955,7 +980,8 @@ struct MealScannerView: View {
                 }.value
                 if let guess { withAnimation(.easeOut(duration: 0.15)) { quickGuess = QuickFoodGuess.draft(for: guess) } }
             }
-            let found = (try? await MealAnalyzer.analyze(image: frame, text: nil, live: true)) ?? []
+            let printed = await Task.detached(priority: .userInitiated) { ARScanner.readText(frame) }.value
+            let found = (try? await MealAnalyzer.analyze(image: frame, text: nil, live: true, seenText: printed)) ?? []
             liveBusy = false
             withAnimation(.easeOut(duration: 0.15)) { quickGuess = nil }
             pending.remove(lookID)
@@ -976,7 +1002,7 @@ struct MealScannerView: View {
                     let samePlace = here.flatMap { here in
                         liveItems.first { known in
                             guard let shown = camera.onScreen[known.id] else { return false }
-                            return iou(shown, here) > 0.5
+                            return sameObject(shown, here)
                         }
                     }
                     if let known = liveItems.first(where: { $0.label == item.label }) ?? samePlace {
@@ -1055,7 +1081,9 @@ struct MealScannerView: View {
         do {
             let typedOnly = typed.map { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? false
             // A typed addition after a photo is analyzed as text, so it adds new foods only.
-            let result = try await MealAnalyzer.analyze(image: (typedOnly && !drafts.isEmpty) ? nil : image, text: typed)
+            let photo = (typedOnly && !drafts.isEmpty) ? nil : image
+            let printed = await Task.detached(priority: .userInitiated) { photo.map(ARScanner.readText) ?? [] }.value
+            let result = try await MealAnalyzer.analyze(image: photo, text: typed, seenText: printed)
             if typedOnly && !drafts.isEmpty {
                 drafts += result
             } else {
@@ -1192,6 +1220,17 @@ private struct ProcessingSpot: View {
             withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) { pulse = true }
         }
     }
+}
+
+/// Whether two frames on screen are around the same object: they overlap a lot, or they're
+/// of similar size and the middle of one lies inside the other (the model's frames are
+/// rough, so two looks at one chocolate bar can differ quite a bit in size and position).
+/// A much smaller frame inside a big one (a cookie on a plate) stays a separate object.
+private func sameObject(_ a: CGRect, _ b: CGRect) -> Bool {
+    if iou(a, b) > 0.25 { return true }
+    let areaA = a.width * a.height, areaB = b.width * b.height
+    guard max(areaA, areaB) < 3 * min(areaA, areaB) else { return false }
+    return a.contains(CGPoint(x: b.midX, y: b.midY)) || b.contains(CGPoint(x: a.midX, y: a.midY))
 }
 
 /// Intersection over union of two rectangles (0 = apart, 1 = the same).
