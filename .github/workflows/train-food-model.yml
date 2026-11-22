@@ -15,7 +15,7 @@ permissions:
 jobs:
   train:
     runs-on: macos-15
-    timeout-minutes: 330
+    timeout-minutes: 345
     steps:
       - uses: actions/checkout@v4
 
@@ -30,10 +30,28 @@ jobs:
       - name: Make training subset
         run: python3 tools/food101/subset.py food-101 subset 200 40
 
+      # Create ML's checkpoints from an earlier run of the same training code, so a run that
+      # was stopped (timeout, crash) continues where it got to instead of starting over.
+      - name: Restore saved training progress
+        uses: actions/cache/restore@v4
+        with:
+          path: training-session
+          key: food-session-${{ hashFiles('tools/food101/**') }}-${{ github.run_id }}
+          restore-keys: food-session-${{ hashFiles('tools/food101/**') }}-
+
       - name: Train with Create ML
+        # Shorter than the job timeout, so the progress is still saved when time runs out.
+        timeout-minutes: 300
         run: |
           swiftc -O tools/food101/TrainFoodModel.swift -o train-food-model
-          ./train-food-model subset Sources/Food/FoodClassifier.mlmodel
+          ./train-food-model subset Sources/Food/FoodClassifier.mlmodel training-session
+
+      - name: Save training progress
+        if: always() && hashFiles('training-session/**') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: training-session
+          key: food-session-${{ hashFiles('tools/food101/**') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Commit the model
         run: |
