@@ -56,6 +56,17 @@ final class ProgressModel: ObservableObject {
     @Published private(set) var comparison: [ComparePoint] = []
     @Published private(set) var macros7: (kcal: Double, protein: Double, carbs: Double, fat: Double)?
     @Published private(set) var loading = false
+    /// Steps and calories burned per complete day in the range (for the activity summary).
+    @Published private(set) var dailySteps: [(day: Date, value: Double)] = []
+    @Published private(set) var dailyBurn: [(day: Date, value: Double)] = []
+    /// Latest height in Apple Health, in meters (for BMI).
+    @Published private(set) var heightM: Double?
+
+    /// Body-mass index from the latest weigh-in and height.
+    var bmi: Double? {
+        guard let w = currentWeight, let h = heightM, h > 0.5 else { return nil }
+        return w / (h * h)
+    }
 
     private let store = HKHealthStore()
 
@@ -159,6 +170,11 @@ final class ProgressModel: ObservableObject {
             }
         }
         balances = days
+        dailyBurn = burned.filter { $0.key < today && $0.key >= start && $0.value > 0 }
+            .sorted { $0.key < $1.key }.map { (day: $0.key, value: $0.value) }
+        dailySteps = await stepsPerDay(from: start, to: today)
+        heightM = (try? await samples(of: HKQuantityType(.height), from: .distantPast))?.last?
+            .quantity.doubleValue(for: .meter())
 
         // Expected (from the cumulative calorie balance) vs actual weight change, both in kg,
         // both measured from the same starting point: the weight on the food tracking start
@@ -191,6 +207,26 @@ final class ProgressModel: ObservableObject {
                        last7.map(\.carbs).reduce(0, +) / n, last7.map(\.fat).reduce(0, +) / n)
         } else {
             macros7 = nil
+        }
+    }
+
+    /// Steps per complete day, Apple Health's merged total (as the Health app shows).
+    private func stepsPerDay(from start: Date, to end: Date) async -> [(day: Date, value: Double)] {
+        await withCheckedContinuation { continuation in
+            let query = HKStatisticsCollectionQuery(
+                quantityType: HKQuantityType(.stepCount),
+                quantitySamplePredicate: HKQuery.predicateForSamples(withStart: start, end: end, options: .strictStartDate),
+                options: .cumulativeSum, anchorDate: start, intervalComponents: DateComponents(day: 1))
+            query.initialResultsHandler = { _, collection, _ in
+                var values: [(day: Date, value: Double)] = []
+                collection?.enumerateStatistics(from: start, to: end) { stats, _ in
+                    if let v = stats.sumQuantity()?.doubleValue(for: .count()), v > 0 {
+                        values.append((day: stats.startDate, value: v))
+                    }
+                }
+                continuation.resume(returning: values)
+            }
+            store.execute(query)
         }
     }
 

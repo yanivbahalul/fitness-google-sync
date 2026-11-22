@@ -145,7 +145,7 @@ enum HealthAuthorization {
     static var readTypes: Set<HKObjectType> {
         var types: Set<HKObjectType> = [HKCategoryType(.sleepAnalysis)]
         for id: HKQuantityTypeIdentifier in [.stepCount, .distanceWalkingRunning, .activeEnergyBurned, .flightsClimbed,
-                                             .restingHeartRate, .vo2Max, .bodyMass, .dietaryEnergyConsumed] {
+                                             .restingHeartRate, .vo2Max, .bodyMass, .height, .dietaryEnergyConsumed] {
             types.insert(HKQuantityType(id))
         }
         return types
