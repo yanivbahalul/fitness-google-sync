@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreImage
+import CoreMotion
 import PhotosUI
 import SwiftUI
 import Vision
@@ -27,6 +28,13 @@ final class ScannerCamera: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     @Published var frameSize = CGSize(width: 1080, height: 1920)
     /// nil until the user answered the camera permission prompt.
     @Published var authorized: Bool?
+    /// The phone is moving (from the motion sensors); live labels are cleared while it moves.
+    @Published private(set) var moving = false
+    /// When the phone last stopped moving.
+    private(set) var stillSince = Date()
+    /// Goes up every time the phone starts moving, to discard answers for an old view.
+    private(set) var moveCount = 0
+    private let motion = CMMotionManager()
 
     private let photoOutput = AVCapturePhotoOutput()
     private let videoOutput = AVCaptureVideoDataOutput()
@@ -41,17 +49,21 @@ final class ScannerCamera: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     func snapshot() async -> UIImage? {
         await withCheckedContinuation { continuation in
             queue.async {
-                guard let frame = self.latestFrame,
-                      let cg = self.ciContext.createCGImage(CIImage(cvPixelBuffer: frame),
-                                                            from: CGRect(x: 0, y: 0, width: CVPixelBufferGetWidth(frame),
-                                                                         height: CVPixelBufferGetHeight(frame)))
-                else { continuation.resume(returning: nil); return }
+                guard let frame = self.latestFrame else { continuation.resume(returning: nil); return }
+                // Scale down before converting: the live look-up only needs ~512 px.
+                let full = CIImage(cvPixelBuffer: frame)
+                let scale = min(1, 512 / max(full.extent.width, full.extent.height))
+                let small = full.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+                guard let cg = self.ciContext.createCGImage(small, from: small.extent) else {
+                    continuation.resume(returning: nil); return
+                }
                 continuation.resume(returning: UIImage(cgImage: cg))
             }
         }
     }
 
     func start() {
+        startMotion()
         AVCaptureDevice.requestAccess(for: .video) { granted in
             DispatchQueue.main.async { self.authorized = granted }
             guard granted else { return }
@@ -63,7 +75,30 @@ final class ScannerCamera: NSObject, ObservableObject, AVCaptureVideoDataOutputS
     }
 
     func stop() {
+        motion.stopDeviceMotionUpdates()
         queue.async { if self.session.isRunning { self.session.stopRunning() } }
+    }
+
+    /// Watches rotation and shake: a turn of more than ~20°/s or a push counts as moving,
+    /// and the view is considered still again after 0.4 s of calm.
+    private func startMotion() {
+        guard motion.isDeviceMotionAvailable, !motion.isDeviceMotionActive else { return }
+        motion.deviceMotionUpdateInterval = 1.0 / 20
+        var lastMove = Date.distantPast
+        motion.startDeviceMotionUpdates(to: .main) { [weak self] data, _ in
+            guard let self, let data else { return }
+            let r = data.rotationRate, a = data.userAcceleration
+            let rotating = (r.x * r.x + r.y * r.y + r.z * r.z).squareRoot() > 0.35
+            let pushed = (a.x * a.x + a.y * a.y + a.z * a.z).squareRoot() > 0.08
+            let now = Date()
+            if rotating || pushed {
+                lastMove = now
+                if !self.moving { self.moving = true; self.moveCount += 1 }
+            } else if self.moving, now.timeIntervalSince(lastMove) > 0.4 {
+                self.moving = false
+                self.stillSince = now
+            }
+        }
     }
 
     private func configureIfNeeded() {
@@ -232,6 +267,10 @@ struct MealScannerView: View {
             }
             .onAppear { camera.start() }
             .task { await liveLoop() }
+            // Moving the phone clears the labels at once, so no frame is left over a wrong spot.
+            .onChange(of: camera.moving) { moving in
+                if moving { withAnimation(.easeOut(duration: 0.15)) { liveItems = [] } }
+            }
             .onDisappear { camera.stop() }
             .onChange(of: pickerItem) { item in
                 guard let item else { return }
@@ -493,16 +532,24 @@ struct MealScannerView: View {
     /// While aiming (no photo yet), look at the current frame every ~2.5 s with the fast
     /// model and show what it recognizes, so foods can be added without taking a photo.
     private func liveLoop() async {
+        var lastLook = Date.distantPast
         while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 2_500_000_000)
-            guard image == nil, !reviewing, !liveBusy, camera.authorized == true,
-                  !camera.boxes.isEmpty, AnthropicKeyStore.key != nil,
-                  let frame = await camera.snapshot() else { continue }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            // Look as soon as the phone has been still for a moment; refresh every few
+            // seconds while it stays still. Never while moving: the frames would be stale.
+            guard image == nil, !reviewing, !liveBusy, camera.authorized == true, !camera.moving,
+                  Date().timeIntervalSince(camera.stillSince) > 0.35,
+                  liveItems.isEmpty || Date().timeIntervalSince(lastLook) > 4,
+                  !camera.boxes.isEmpty, AnthropicKeyStore.key != nil else { continue }
+            let view = camera.moveCount
+            guard let frame = await camera.snapshot() else { continue }
             liveBusy = true
-            if let found = try? await MealAnalyzer.analyze(image: frame, text: nil, live: true), image == nil {
-                withAnimation(.easeOut(duration: 0.2)) { liveItems = found }
-            }
+            lastLook = Date()
+            let found = try? await MealAnalyzer.analyze(image: frame, text: nil, live: true)
             liveBusy = false
+            // Drop the answer if the phone moved meanwhile: it describes the old view.
+            guard let found, image == nil, camera.moveCount == view, !camera.moving else { continue }
+            withAnimation(.easeOut(duration: 0.2)) { liveItems = found }
         }
     }
 
