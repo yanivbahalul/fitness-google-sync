@@ -87,9 +87,9 @@ enum SyncCatalog {
             daily(name: "קצב נשימה", dataType: "daily-respiratory-rate", key: "dailyRespiratoryRate",
                   field: "breathsPerMinute", hk: .respiratoryRate, unit: HKUnit.count().unitDivided(by: .minute())).tagged(.heart, "wind").every(hours: 4),
             samples(name: "משקל", dataType: "weight", key: "weight", field: "weightGrams",
-                    hk: .bodyMass, unit: .gram()).tagged(.body, "scalemass.fill").every(hours: 4),
+                    hk: .bodyMass, unit: .gram()).tagged(.body, "scalemass.fill"),
             samples(name: "אחוז שומן", dataType: "body-fat", key: "bodyFat", field: "percentage",
-                    hk: .bodyFatPercentage, unit: .percent(), scale: 0.01).tagged(.body, "percent").every(hours: 4),
+                    hk: .bodyFatPercentage, unit: .percent(), scale: 0.01).tagged(.body, "percent"),
             samples(name: "גובה", dataType: "height", key: "height", field: "heightMillimeters",
                     hk: .height, unit: .meter(), scale: 0.001).tagged(.body, "ruler.fill").every(hours: 4),
 

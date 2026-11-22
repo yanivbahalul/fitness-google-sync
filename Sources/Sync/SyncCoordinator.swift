@@ -255,14 +255,13 @@ final class SyncCoordinator: ObservableObject {
             }
         }
 
-        // Slow-changing types are fetched only when due (a manual sync waits at most an hour).
-        // A history restore fetches everything.
-        if restoreFrom == nil {
+        // Automatic syncs fetch slow-changing types only when due. A tap on "sync now" (and a
+        // history restore) fetches everything, so a weight just entered in Google shows up.
+        if restoreFrom == nil, trigger != .manual {
             let now = Date()
             let due = selected.filter { item in
                 guard item.refreshInterval > 0, let last = lastSyncPerItem[item.id] else { return true }
-                let interval = trigger == .manual ? min(item.refreshInterval, 3600) : item.refreshInterval
-                return now.timeIntervalSince(last) >= interval
+                return now.timeIntervalSince(last) >= item.refreshInterval
             }
             if !due.isEmpty {
                 outcome.skippedTypes = selected.count - due.count

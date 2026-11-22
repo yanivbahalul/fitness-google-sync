@@ -390,7 +390,8 @@ private struct WeightCard: View {
 
             if !progress.weights.isEmpty {
                 HStack(spacing: 8) {
-                    StatTile(title: "המשקל עכשיו", value: progress.currentWeight.map { kg($0) } ?? "—")
+                    StatTile(title: progress.lastWeighIn.map { "שקילה אחרונה · \(shortDate($0))" } ?? "שקילה אחרונה",
+                             value: progress.currentWeight.map { kg($0) } ?? "—")
                     StatTile(title: "קצב בשבוע", value: progress.weeklyRate.map { kg($0, sign: true) } ?? "—")
                 }
 

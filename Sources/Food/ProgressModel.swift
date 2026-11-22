@@ -74,8 +74,11 @@ final class ProgressModel: ObservableObject {
         }
     }
 
-    var currentWeight: Double? { trend.last?.kg ?? weights.last?.kg }
-    var startWeight: Double? { trend.first?.kg ?? weights.first?.kg }
+    /// The latest real weigh-in (the number you entered), not the 7-day average: the
+    /// average lags behind while losing weight and read higher than the scale.
+    var currentWeight: Double? { weights.last?.kg }
+    var lastWeighIn: Date? { weights.last?.date }
+    var startWeight: Double? { weights.first?.kg }
     var change: Double? {
         guard let a = startWeight, let b = currentWeight else { return nil }
         return b - a
