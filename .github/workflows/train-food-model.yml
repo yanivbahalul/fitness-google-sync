@@ -31,7 +31,9 @@ jobs:
         run: python3 tools/food101/subset.py food-101 subset 200 40
 
       - name: Train with Create ML
-        run: swift tools/food101/TrainFoodModel.swift subset Sources/Food/FoodClassifier.mlmodel
+        run: |
+          swiftc -O tools/food101/TrainFoodModel.swift -o train-food-model
+          ./train-food-model subset Sources/Food/FoodClassifier.mlmodel
 
       - name: Commit the model
         run: |
