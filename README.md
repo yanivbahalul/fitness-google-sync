@@ -7,7 +7,7 @@
 **Your fitness band's data in Apple Health again, plus a food diary that tracks your weight loss.**
 
 <a href="https://github.com/yanivbahalul/fitness-google-sync/actions/workflows/build.yml"><img alt="Build status" src="https://github.com/yanivbahalul/fitness-google-sync/actions/workflows/build.yml/badge.svg?branch=main"></a>
-<img alt="Platform: iOS 16 or later" src="https://img.shields.io/badge/iOS-16%2B-000000?logo=apple&logoColor=white">
+<img alt="Platform: iOS 17 or later" src="https://img.shields.io/badge/iOS-17%2B-000000?logo=apple&logoColor=white">
 <img alt="Swift 5 with SwiftUI" src="https://img.shields.io/badge/Swift-5%20%C2%B7%20SwiftUI-F05138?logo=swift&logoColor=white">
 <img alt="Apple HealthKit" src="https://img.shields.io/badge/Apple-HealthKit-FF2D55?logo=apple&logoColor=white">
 <a href="https://developers.google.com/health"><img alt="Google Health API v4" src="https://img.shields.io/badge/Google%20Health%20API-v4-4285F4?logo=google&logoColor=white"></a>

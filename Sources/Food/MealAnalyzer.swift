@@ -182,6 +182,12 @@ enum MealAnalyzer {
         if let text, !text.trimmingCharacters(in: .whitespaces).isEmpty {
             prompt += "\n\nתיאור הארוחה מהמשתמש: \(text)"
         }
+        if live {
+            prompt += "\n\nזו הצצה חיה מהמצלמה בזמן כיוון: החזר רק מזון ומשקאות שרואים בבירור, "
+                + "בעיקר במרכז התמונה, שהמשתמש כנראה עומד לאכול. התעלם מחפצים שאינם מזון, ממכשירים "
+                + "(מכונת קפה, קומקום), מאריזות סגורות ברקע ומפריטים קטנים או רחוקים שקשה לזהות. "
+                + "אם אין מזון ברור, החזר רשימה ריקה. אל תנחש."
+        }
         if !seenText.isEmpty {
             prompt += "\n\nטקסט שזוהה בתמונה (על אריזות ותוויות): \(seenText.joined(separator: ", ")). "
                 + "אם זה שם מותג או מוצר, זהה לפיו את המוצר המדויק (למשל TWIX ← טוויקס) ואת ערכיו לפי האריזה."
@@ -236,8 +242,11 @@ enum MealAnalyzer {
 
         // Drop empty items (no name, or no amount and no calories): they can't be logged and
         // only made the screen show "1 g · 0 kcal".
+        // In the live look, also drop what the model itself isn't sure of: in a cluttered
+        // kitchen that's background guesses (garlic, a carrot) that only crowd the screen.
         let items = result.items.filter {
             !$0.name_he.trimmingCharacters(in: .whitespaces).isEmpty && ($0.grams > 1 || $0.kcal_per_100g > 0)
+                && !(live && $0.confidence == "low")
         }
         #if DEBUG
         if items.count != result.items.count { print("MealAnalyzer: dropped empty items:", text) }
