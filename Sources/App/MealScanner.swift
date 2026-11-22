@@ -188,6 +188,16 @@ struct MealScannerView: View {
     @State private var liveBusy = false
     /// Foods added live (tapped while aiming), before any photo.
     @State private var tray: [FoodDraft] = []
+    /// Labels flying from a tapped food down to the Continue button.
+    @State private var flyers: [Flyer] = []
+    @State private var trayBump = false
+
+    struct Flyer: Identifiable {
+        let id = UUID()
+        let text: String
+        let from: CGPoint
+        var arrived = false
+    }
 
     var body: some View {
         NavigationStack {
@@ -281,9 +291,26 @@ struct MealScannerView: View {
                                 .stroke(Theme.accent, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                                 .frame(width: r.width, height: r.height)
                                 .position(x: r.midX, y: r.midY)
-                            liveChip(item)
-                                .position(x: min(max(r.midX, 90), geo.size.width - 90), y: max(r.minY - 24, 70))
+                            let at = CGPoint(x: min(max(r.midX, 90), geo.size.width - 90), y: max(r.minY - 24, 70))
+                            liveChip(item, at: at, bottom: CGPoint(x: geo.size.width / 2, y: geo.size.height - 40))
+                                .position(at)
                         }
+                    }
+                    // The "added" animation: the label shrinks and flies to Continue.
+                    ForEach(flyers) { f in
+                        Label(f.text, systemImage: "checkmark.circle.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 12)
+                            .frame(minHeight: DS.minTap)
+                            .background(Color.green, in: Capsule())
+                            .environment(\.layoutDirection, .rightToLeft)
+                            .fixedSize()
+                            .scaleEffect(f.arrived ? 0.35 : 1.1)
+                            .opacity(f.arrived ? 0 : 1)
+                            .position(f.arrived ? CGPoint(x: geo.size.width / 2, y: geo.size.height - 40) : f.from)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
                     }
                 }
                 .environment(\.layoutDirection, .leftToRight)
@@ -320,7 +347,7 @@ struct MealScannerView: View {
             let unplaced = liveItems.filter { $0.box == nil }
             if !unplaced.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) { ForEach(unplaced) { liveChip($0) } }
+                    HStack(spacing: 8) { ForEach(unplaced) { liveChip($0, at: nil, bottom: nil) } }
                 }
             }
             if !tray.isEmpty {
@@ -329,6 +356,8 @@ struct MealScannerView: View {
                     drafts = tray
                     reviewing = true
                 }
+                .scaleEffect(trayBump ? 1.06 : 1)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
             HStack(spacing: 10) {
                 chip("ברקוד", symbol: "barcode.viewfinder") { onOther(.barcode) }
@@ -401,15 +430,31 @@ struct MealScannerView: View {
     }
 
     /// A recognized food while aiming: name, amount, calories; tap to add.
-    private func liveChip(_ item: FoodDraft) -> some View {
+    private func liveChip(_ item: FoodDraft, at point: CGPoint?, bottom: CGPoint?) -> some View {
         let added = tray.contains { $0.label == item.label }
         return Button {
             guard !added else { return }
             var copy = item
             copy.id = UUID()
             copy.box = nil
-            tray.append(copy)
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) { tray.append(copy) }
+            if let point {
+                let flyer = Flyer(text: item.label, from: point)
+                flyers.append(flyer)
+                DispatchQueue.main.async {
+                    withAnimation(.easeIn(duration: 0.55)) {
+                        if let i = flyers.firstIndex(where: { $0.id == flyer.id }) { flyers[i].arrived = true }
+                    }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    flyers.removeAll { $0.id == flyer.id }
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.5)) { trayBump = true }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) { trayBump = false }
+                    }
+                }
+            }
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: added ? "checkmark.circle.fill" : "plus.circle.fill")
