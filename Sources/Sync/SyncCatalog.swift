@@ -442,7 +442,7 @@ enum SyncCatalog {
                 if let title = session["displayName"] as? String, !title.isEmpty {
                     metadata[HKMetadataKeyWorkoutBrandName] = title
                 }
-                return HKWorkout(
+                return (LegacyWorkout.self as WorkoutMaking.Type).workout(
                     activityType: activityType(session["exerciseType"] as? String),
                     start: iv.start, end: iv.end, duration: duration,
                     totalEnergyBurned: kcal.map { HKQuantity(unit: .kilocalorie(), doubleValue: $0) },
@@ -471,5 +471,29 @@ enum SyncCatalog {
         if t.contains("BASKETBALL") { return .basketball }
         if t.contains("STAIR") { return .stairClimbing }
         return .other
+    }
+}
+
+// MARK: - Workouts
+
+/// HKWorkout's direct initializer is deprecated in favour of HKWorkoutBuilder, but it is the
+/// right one here: the builder takes a workout's calories and distance only as samples it
+/// saves alongside the workout, and those would be counted a second time next to the active
+/// energy and distance samples this app already writes for the same minutes. The direct
+/// initializer keeps the totals on the workout itself. It is still supported; calling it
+/// through this protocol keeps the deliberate use from showing up as a build warning.
+private protocol WorkoutMaking {
+    static func workout(activityType: HKWorkoutActivityType, start: Date, end: Date, duration: TimeInterval,
+                        totalEnergyBurned: HKQuantity?, totalDistance: HKQuantity?,
+                        metadata: [String: Any]?) -> HKWorkout
+}
+
+private enum LegacyWorkout: WorkoutMaking {
+    @available(iOS, deprecated: 17.0, message: "See WorkoutMaking")
+    static func workout(activityType: HKWorkoutActivityType, start: Date, end: Date, duration: TimeInterval,
+                        totalEnergyBurned: HKQuantity?, totalDistance: HKQuantity?,
+                        metadata: [String: Any]?) -> HKWorkout {
+        HKWorkout(activityType: activityType, start: start, end: end, duration: duration,
+                  totalEnergyBurned: totalEnergyBurned, totalDistance: totalDistance, metadata: metadata)
     }
 }

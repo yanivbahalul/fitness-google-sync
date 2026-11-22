@@ -19,6 +19,7 @@ struct SettingsView: View {
     @State private var keySaved = AnthropicKeyStore.key != nil
     @State private var importingMemory = false
     @State private var memoryMessage: String?
+    @State private var confirmingMemoryReset = false
 
     private let expiry = Notifier.signingExpiry
     @AppStorage(AppSettings.activityAllSourcesKey) private var activityAllSources = true
@@ -132,6 +133,21 @@ struct SettingsView: View {
                         importingMemory = true
                     } label: {
                         SettingLabel("שחזור זיכרון מאכלים מקובץ", symbol: "square.and.arrow.down")
+                    }
+                    Button(role: .destructive) {
+                        confirmingMemoryReset = true
+                    } label: {
+                        SettingLabel("איפוס זיכרון הסורק", symbol: "trash")
+                    }
+                    .disabled(FoodMemory.shared.foods.isEmpty)
+                    .confirmationDialog("לאפס את זיכרון הסורק?", isPresented: $confirmingMemoryReset, titleVisibility: .visible) {
+                        Button("אפס", role: .destructive) {
+                            let n = FoodMemory.shared.reset()
+                            memoryMessage = "הזיכרון אופס (נמחקו \(n) מאכלים)."
+                        }
+                        Button("ביטול", role: .cancel) {}
+                    } message: {
+                        Text("הסורק ישכח את כל המאכלים שלמד ויזהה אותם מחדש. כדאי לגבות לקובץ לפני כן. היומן והארוחות לא נמחקים.")
                     }
                     if let memoryMessage {
                         Text(memoryMessage).font(.footnote).foregroundStyle(.secondary)
