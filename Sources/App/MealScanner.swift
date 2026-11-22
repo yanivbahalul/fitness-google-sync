@@ -15,8 +15,11 @@ import Vision
 // MARK: - Camera
 
 /// Camera session: live preview, on-device object frames, and still capture.
+///
+/// `@unchecked Sendable`: the capture state is only touched on `queue`, and the published
+/// values only on the main queue, so the closures that hop between them are safe.
 final class ScannerCamera: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate,
-                           AVCapturePhotoCaptureDelegate {
+                           AVCapturePhotoCaptureDelegate, @unchecked Sendable {
     let session = AVCaptureSession()
     /// Objects in view: fractions of the frame, top-left origin, portrait.
     @Published var boxes: [CGRect] = []
