@@ -1133,7 +1133,23 @@ struct MealScannerView: View {
             // A typed addition after a photo is analyzed as text, so it adds new foods only.
             let photo = (typedOnly && !drafts.isEmpty) ? nil : image
             let printed = await Task.detached(priority: .userInitiated) { photo.map(ARScanner.readText) ?? [] }.value
-            let result = try await MealAnalyzer.analyze(image: photo, text: typed, seenText: printed)
+            // What was already added while aiming isn't counted again from the photo.
+            let added = photo == nil ? [] : tray.map { "\($0.label) (\(Int(safe: $0.grams)) ג׳)" }
+            var result = try await MealAnalyzer.analyze(image: photo, text: typed, seenText: printed, alreadyAdded: added)
+            // Snap each frame on the photo to the object found there, so it sits on that food
+            // (on a smaller copy: segmentation doesn't need the full resolution).
+            if let photo {
+                let scanner = camera
+                let found = result
+                result = await Task.detached(priority: .userInitiated) {
+                    let small = downscaled(photo, maxSide: 1024)
+                    return found.map { item in
+                        var item = item
+                        if let box = item.box { item.box = scanner.refine(box, in: small).box }
+                        return item
+                    }
+                }.value
+            }
             if typedOnly && !drafts.isEmpty {
                 drafts += result
             } else {
@@ -1289,4 +1305,14 @@ private func iou(_ a: CGRect, _ b: CGRect) -> CGFloat {
     guard !inter.isNull, inter.width > 0, inter.height > 0 else { return 0 }
     let i = inter.width * inter.height
     return i / (a.width * a.height + b.width * b.height - i)
+}
+
+/// A smaller copy of a photo (same proportions, upright).
+private func downscaled(_ image: UIImage, maxSide: CGFloat) -> UIImage {
+    let scale = min(1, maxSide / max(image.size.width, image.size.height))
+    guard scale < 1 else { return image }
+    let size = CGSize(width: (image.size.width * scale).rounded(), height: (image.size.height * scale).rounded())
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    return UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
 }
