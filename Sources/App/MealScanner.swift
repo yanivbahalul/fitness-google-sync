@@ -78,6 +78,12 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
         onScreen[id] = nil
     }
 
+    /// Where a box from the camera image (portrait fractions) appears in the view.
+    func viewRect(for box: CGRect, imageSize: CGSize) -> CGRect? {
+        guard let view else { return nil }
+        return place(box, image: imageSize, in: view.bounds.size, fill: true)
+    }
+
     func center(of id: UUID) -> SIMD3<Float>? { spots[id]?.center }
 
     /// True when a known spot sits in the middle of the view: that area was already
@@ -172,17 +178,7 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
     /// a candidate much bigger than the model's box (two objects merged) is rejected.
     func refine(_ box: CGRect, in image: UIImage) -> CGRect {
         guard let cg = image.cgImage else { return box }
-        var objects: [CGRect] = []
-        if #available(iOS 17.0, *) {
-            objects = instanceBoxes(cg)
-        }
-        if objects.isEmpty {
-            let request = VNGenerateObjectnessBasedSaliencyImageRequest()
-            try? VNImageRequestHandler(cgImage: cg, options: [:]).perform([request])
-            objects = (request.results?.first?.salientObjects ?? []).map { o in
-                CGRect(x: o.boundingBox.minX, y: 1 - o.boundingBox.maxY, width: o.boundingBox.width, height: o.boundingBox.height)
-            }
-        }
+        let objects = Self.detectObjects(cg)
         func overlap(_ a: CGRect, _ b: CGRect) -> CGFloat {
             let i = a.intersection(b)
             guard !i.isNull, i.width > 0, i.height > 0 else { return 0 }
@@ -197,9 +193,100 @@ final class ARScanner: NSObject, ObservableObject, ARSessionDelegate, @unchecked
         return fitting.max { overlap($0, box) < overlap($1, box) } ?? box
     }
 
+    /// The separate objects in an image (fractions, top-left origin): per-object
+    /// segmentation on iOS 17+, saliency otherwise.
+    static func detectObjects(_ cg: CGImage) -> [CGRect] {
+        if #available(iOS 17.0, *) {
+            let boxes = instanceBoxes(cg)
+            if !boxes.isEmpty { return boxes }
+        }
+        let request = VNGenerateObjectnessBasedSaliencyImageRequest()
+        try? VNImageRequestHandler(cgImage: cg, options: [:]).perform([request])
+        return (request.results?.first?.salientObjects ?? []).map { o in
+            CGRect(x: o.boundingBox.minX, y: 1 - o.boundingBox.maxY, width: o.boundingBox.width, height: o.boundingBox.height)
+        }
+    }
+
+    // MARK: Visual memory
+
+    /// A visual fingerprint of every food recognized in this session, to find it again on
+    /// the phone itself (no network) when it shows up somewhere else.
+    private var prints: [UUID: VNFeaturePrintObservation] = [:]
+
+    @discardableResult
+    func remember(_ id: UUID, box: CGRect, in image: UIImage) -> VNFeaturePrintObservation? {
+        guard let cg = image.cgImage, let print = Self.featurePrint(box, in: cg) else { return nil }
+        prints[id] = print
+        return print
+    }
+
+    func forget(_ id: UUID) { prints[id] = nil }
+
+    var rememberedPrints: [(UUID, VNFeaturePrintObservation)] { prints.map { ($0.key, $0.value) } }
+
+    static func featurePrint(_ box: CGRect, in cg: CGImage) -> VNFeaturePrintObservation? {
+        let w = CGFloat(cg.width), h = CGFloat(cg.height)
+        let rect = CGRect(x: box.minX * w, y: box.minY * h, width: box.width * w, height: box.height * h).integral
+        guard rect.width >= 16, rect.height >= 16, let crop = cg.cropping(to: rect) else { return nil }
+        let request = VNGenerateImageFeaturePrintRequest()
+        request.imageCropAndScaleOption = .scaleFill
+        try? VNImageRequestHandler(cgImage: crop, options: [:]).perform([request])
+        return request.results?.first
+    }
+
+    /// Finds remembered foods among the objects in `image`: each object's fingerprint is
+    /// compared with the remembered ones; a close enough match is that food. Runs on the
+    /// phone in a few tens of milliseconds.
+    /// `strictness` per fingerprint: 1 for this session's foods, lower (stricter) for
+    /// foods from earlier sessions, where light and angle differ more.
+    static func findRemembered(in image: UIImage, among prints: [(UUID, VNFeaturePrintObservation, Float)]) -> [(UUID, CGRect)] {
+        guard !prints.isEmpty, let cg = image.cgImage else { return [] }
+        // Fingerprints from the newer model (iOS 17+) are normalized: same object ≈ 0.2-0.5,
+        // different objects ≈ 0.8+. The older model uses a much larger scale.
+        let threshold: Float
+        if #available(iOS 17.0, *) { threshold = 0.6 } else { threshold = 16 }
+        var used = Set<UUID>()
+        var found: [(UUID, CGRect)] = []
+        let objects = detectObjects(cg).sorted { $0.width * $0.height > $1.width * $1.height }.prefix(6)
+        for object in objects {
+            guard let print = featurePrint(object, in: cg) else { continue }
+            // Nearest neighbour per food (a food can have several example fingerprints).
+            var nearest: [UUID: (distance: Float, limit: Float)] = [:]
+            for (id, known, strictness) in prints where !used.contains(id) {
+                var distance: Float = .greatestFiniteMagnitude
+                try? print.computeDistance(&distance, to: known)
+                if distance < (nearest[id]?.distance ?? .greatestFiniteMagnitude) {
+                    nearest[id] = (distance, threshold * strictness)
+                }
+            }
+            let ranked = nearest.sorted { $0.value.distance < $1.value.distance }
+            guard let best = ranked.first, best.value.distance < best.value.limit else { continue }
+            // Ambiguous (two foods almost equally close): don't guess, let Claude decide.
+            if ranked.count > 1, best.value.distance > ranked[1].value.distance * 0.85 { continue }
+            used.insert(best.key)
+            found.append((best.key, object))
+        }
+        return found
+    }
+
+    /// How good a crop is as an example: bigger and better-looking (sharp, well lit) is
+    /// better. Uses Vision's image-quality model on iOS 18+.
+    static func quality(_ box: CGRect, in image: UIImage) -> Float {
+        guard let cg = image.cgImage else { return 0 }
+        let w = CGFloat(cg.width), h = CGFloat(cg.height)
+        let rect = CGRect(x: box.minX * w, y: box.minY * h, width: box.width * w, height: box.height * h).integral
+        var score = Float(box.width * box.height)
+        if #available(iOS 18.0, *), let crop = cg.cropping(to: rect) {
+            let request = VNCalculateImageAestheticsScoresRequest()
+            try? VNImageRequestHandler(cgImage: crop, options: [:]).perform([request])
+            if let overall = request.results?.first?.overallScore { score *= (1 + overall) }
+        }
+        return score
+    }
+
     /// Bounding boxes of the separate objects Vision finds (fractions, top-left origin).
     @available(iOS 17.0, *)
-    private func instanceBoxes(_ cg: CGImage) -> [CGRect] {
+    private static func instanceBoxes(_ cg: CGImage) -> [CGRect] {
         let request = VNGenerateForegroundInstanceMaskRequest()
         try? VNImageRequestHandler(cgImage: cg, options: [:]).perform([request])
         guard let result = request.results?.first else { return [] }
@@ -318,6 +405,8 @@ struct MealScannerView: View {
     @State private var tray: [FoodDraft] = []
     /// Spots with a look still in progress ("processing" waits there).
     @State private var pending: Set<UUID> = []
+    /// Scanner item id → its entry in the on-phone food memory.
+    @State private var memoryLink: [UUID: UUID] = [:]
     /// The food being corrected ("this is actually…"), and what the user typed.
     @State private var correcting: FoodDraft?
     @State private var correctionText = ""
@@ -650,6 +739,8 @@ struct MealScannerView: View {
             }
             fixed.id = item.id
             fixed.box = item.box
+            // Learn the correction, so this food is recognized correctly next time.
+            if let entry = memoryLink[item.id] { FoodMemory.shared.correct(entry, with: fixed) }
             withAnimation(.easeOut(duration: 0.2)) {
                 if let i = liveItems.firstIndex(where: { $0.id == item.id }) { liveItems[i] = fixed }
                 if let i = drafts.firstIndex(where: { $0.id == item.id }) { drafts[i] = fixed }
@@ -685,11 +776,44 @@ struct MealScannerView: View {
     /// isn't known yet, look at the frame with the fast model. Answers are anchored to the
     /// room from the frame they were taken from, so moving meanwhile doesn't matter.
     private func liveLoop() async {
+        var lastLocalLook = Date.distantPast
         while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 200_000_000)
             guard image == nil, !reviewing, !liveBusy, camera.authorized == true, !camera.moving,
-                  Date().timeIntervalSince(camera.stillSince) > 0.3, !camera.middleIsKnown(),
-                  AnthropicKeyStore.key != nil, let snap = camera.snapshot() else { continue }
+                  Date().timeIntervalSince(camera.stillSince) > 0.3 else { continue }
+
+            // 1. On the phone: find remembered foods in view (e.g. the cup was moved) and put
+            //    their labels there at once, without asking Claude again.
+            let remembered = camera.rememberedPrints.map { ($0.0, $0.1, Float(1)) }
+                + FoodMemory.shared.prints(excluding: Set(memoryLink.values)).map { ($0.0, $0.1, Float(0.8)) }
+            if !remembered.isEmpty, Date().timeIntervalSince(lastLocalLook) > 0.6, let snap = camera.snapshot() {
+                lastLocalLook = Date()
+                let (frame, arFrame) = snap
+                let matches = await Task.detached(priority: .userInitiated) {
+                    ARScanner.findRemembered(in: frame, among: remembered)
+                }.value
+                for (matchID, box) in matches {
+                    var id = matchID
+                    // A food from an earlier session: bring it into this scan from memory.
+                    if !liveItems.contains(where: { $0.id == matchID }) {
+                        guard var item = FoodMemory.shared.draft(for: matchID) else { continue }
+                        item.box = box
+                        id = item.id
+                        memoryLink[id] = matchID
+                        camera.remember(id, box: box, in: frame)
+                        withAnimation(.easeOut(duration: 0.25)) { liveItems.append(item) }
+                    }
+                    // Already shown right there: leave it. Elsewhere or out of view: move it here.
+                    if let shown = camera.onScreen[id], let here = camera.viewRect(for: box, imageSize: frame.size),
+                       here.contains(CGPoint(x: shown.midX, y: shown.midY)) { continue }
+                    if let spot = camera.anchor(box, from: arFrame) {
+                        withAnimation(.easeOut(duration: 0.2)) { camera.set(id, spot) }
+                    }
+                }
+            }
+
+            // 2. Ask Claude only about what's new in the middle of the view.
+            guard !camera.middleIsKnown(), AnthropicKeyStore.key != nil, let snap = camera.snapshot() else { continue }
             let (frame, arFrame) = snap
 
             // Mark the spot being looked at: it shows "processing" and isn't asked again.
@@ -706,15 +830,26 @@ struct MealScannerView: View {
 
             var added = false
             for item in found {
-                if let rough = item.box, let spot = camera.anchor(camera.refine(rough, in: frame), from: arFrame) {
+                if let rough = item.box {
+                    let box = camera.refine(rough, in: frame)
+                    guard let spot = camera.anchor(box, from: arFrame) else { continue }
                     // The same food seen again: it's the one already found. If it's somewhere
                     // else now (the cup was moved), move its frame there and resize it.
                     if let known = liveItems.first(where: { $0.label == item.label }) {
                         camera.set(known.id, spot)
+                        if let print = camera.remember(known.id, box: box, in: frame) {
+                            memoryLink[known.id] = FoodMemory.shared.learn(known, print: print,
+                                                                           quality: ARScanner.quality(box, in: frame),
+                                                                           foodID: memoryLink[known.id])
+                        }
                         added = true
                         continue
                     }
                     camera.set(item.id, spot)
+                    if let print = camera.remember(item.id, box: box, in: frame) {
+                        memoryLink[item.id] = FoodMemory.shared.learn(item, print: print,
+                                                                      quality: ARScanner.quality(box, in: frame))
+                    }
                     withAnimation(.easeOut(duration: 0.25)) { liveItems.append(item) }
                     added = true
                 } else if item.box == nil, !liveItems.contains(where: { $0.label == item.label }) {
