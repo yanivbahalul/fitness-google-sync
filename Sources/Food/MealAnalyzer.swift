@@ -92,6 +92,14 @@ enum MealAnalyzer {
         let fat_per_100g: Double
         let portion_note: String
         let confidence: String
+        let box: Box
+    }
+
+    struct Box: Decodable {
+        let x: Double
+        let y: Double
+        let w: Double
+        let h: Double
     }
 
     private struct Result: Decodable {
@@ -105,6 +113,7 @@ enum MealAnalyzer {
     - grams: הכמות שנאכלה בגרמים (משקאות במ"ל ≈ גרם). אם בתיאור כתובה כמות ("2 פרוסות", "כוס"), המר לגרמים.
     - ערכים ל‑100 גרם (kcal, protein, carbs, fat): הערכה שלך למאכל במצב שבו הוא נאכל (מבושל/מטוגן/אפוי), לשימוש רק אם המאכל לא יימצא במאגר.
     - portion_note: איך הערכת את הכמות, במילים פשוטות (למשל "כ‑1 כוס", "2 פרוסות בינוניות", "חצי צלחת").
+    - box: מיקום המאכל בתמונה כשברים בין 0 ל‑1 מגודל התמונה: x,y הפינה השמאלית העליונה, w,h רוחב וגובה. אם אין תמונה, 0,0,0,0.
     - confidence: "high" אם ברור מה זה וכמה, "medium" אם הכמות משוערת, "low" אם לא בטוח מה המאכל או שהוא מוסתר.
     כדי להעריך גודל השתמש בעצמים מוכרים בתמונה: צלחת רגילה כ‑26 ס"מ, מזלג כ‑19 ס"מ, כף כ‑15 מ"ל, כוס כ‑240 מ"ל, כף יד.
     העדף מנות ישראליות טיפוסיות כשאין רמז אחר. שמן, רטבים וממרחים שרואים בתמונה הם פריט נפרד.
@@ -128,10 +137,19 @@ enum MealAnalyzer {
                         "fat_per_100g": ["type": "number"],
                         "portion_note": ["type": "string"],
                         "confidence": ["type": "string", "enum": ["high", "medium", "low"]],
+                        "box": [
+                            "type": "object",
+                            "properties": [
+                                "x": ["type": "number"], "y": ["type": "number"],
+                                "w": ["type": "number"], "h": ["type": "number"],
+                            ],
+                            "required": ["x", "y", "w", "h"],
+                            "additionalProperties": false,
+                        ],
                     ],
                     "required": ["name_he", "search_terms", "grams", "kcal_per_100g",
                                  "protein_per_100g", "carbs_per_100g", "fat_per_100g",
-                                 "portion_note", "confidence"],
+                                 "portion_note", "confidence", "box"],
                     "additionalProperties": false,
                 ],
             ],
@@ -207,7 +225,11 @@ enum MealAnalyzer {
                              carbsPer100: item.carbs_per_100g, fatPer100: item.fat_per_100g,
                              alternatives: candidates,
                              portionNote: item.portion_note.isEmpty ? nil : item.portion_note,
-                             lowConfidence: item.confidence == "low")
+                             lowConfidence: item.confidence == "low",
+                             box: item.box.w > 0.02 && item.box.h > 0.02
+                                 ? CGRect(x: min(max(item.box.x, 0), 1), y: min(max(item.box.y, 0), 1),
+                                          width: min(item.box.w, 1), height: min(item.box.h, 1))
+                                 : nil)
         }
     }
 
