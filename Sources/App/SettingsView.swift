@@ -198,7 +198,7 @@ struct SettingsView: View {
                 } header: {
                     Text("חשבון ופרטיות")
                 } footer: {
-                    Text("נתוני הבריאות עוברים ישירות מ‑Google Health ל‑Apple Health, בלי שרת. ערכי מזון: מאגר צמרת, משרד הבריאות. מוצרים ארוזים: Open Food Facts.")
+                    Text("נתוני הבריאות עוברים ישירות מ‑Google Health ל‑Apple Health, בלי שרת. ערכי מזון: מאגר צמרת, משרד הבריאות, ו‑USDA FoodData Central. מוצרים ארוזים: Open Food Facts.")
                 }
             }
             .navigationTitle("הגדרות")

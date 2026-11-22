@@ -15,6 +15,12 @@ struct FoodItem: Identifiable, Hashable {
 
     var id: Int { code }
 
+    /// Foods from USDA FoodData Central have codes from this offset up (fdc_id + offset).
+    static let usdaOffset = 100_000_000
+    var isUSDA: Bool { code >= Self.usdaOffset }
+    /// Where the values come from, for the UI.
+    var sourceName: String { isUSDA ? "USDA" : "צמרת" }
+
     struct Portion: Hashable {
         let name: String
         let grams: Double
@@ -59,7 +65,29 @@ final class FoodDatabase {
             return FoodItem(code: code, name: name, englishName: row[2] as? String ?? "",
                             kcal: num(3), protein: num(4), fat: num(5), carbs: num(6), portions: portions)
         }
+        foods += Self.loadUSDA()
         normalizedNames = foods.map { Self.normalize($0.name + " " + $0.englishName) }
+    }
+
+    /// USDA FoodData Central (SR Legacy + Foundation, ~8,000 foods, public domain), bundled
+    /// as Sources/Food/usda.json: [fdc_id, name, kcal, protein, fat, carbs, [[portion, g]]].
+    /// English names; used when a food isn't in Tzameret (matched by the English name).
+    private static func loadUSDA() -> [FoodItem] {
+        guard let url = Bundle.main.url(forResource: "usda", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rows = json["foods"] as? [[Any]] else { return [] }
+        return rows.compactMap { row in
+            guard row.count >= 7, let id = row[0] as? Int, let name = row[1] as? String else { return nil }
+            func num(_ i: Int) -> Double { (row[i] as? NSNumber)?.doubleValue ?? 0 }
+            let portions = (row[6] as? [[Any]] ?? []).compactMap { pair -> FoodItem.Portion? in
+                guard pair.count == 2, let label = pair[0] as? String, let g = (pair[1] as? NSNumber)?.doubleValue
+                else { return nil }
+                return FoodItem.Portion(name: label, grams: g)
+            }
+            return FoodItem(code: FoodItem.usdaOffset + id, name: name, englishName: name,
+                            kcal: num(2), protein: num(3), fat: num(4), carbs: num(5), portions: portions)
+        }
     }
 
     /// Best matches for a free-text query ("שניצל עוף", "hummus").
@@ -84,6 +112,7 @@ final class FoodDatabase {
             guard matched > 0 else { continue }
             if matched == tokens.count { score += 10 }
             score -= Double(foods[i].name.count) / 40   // prefer simpler, shorter names
+            if !foods[i].isUSDA { score += 1 }             // prefer the Israeli database on ties
             scored.append((score, i))
         }
         return scored.sorted { $0.score > $1.score }.prefix(limit).map { foods[$0.index] }
