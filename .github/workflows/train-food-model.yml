@@ -1,0 +1,43 @@
+name: Train food model
+
+# Trains the on-phone food classifier (Create ML, Food-101 subset) on a Mac and commits
+# Sources/Food/FoodClassifier.mlmodel to the branch it ran on.
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "tools/food101/**"
+      - ".github/workflows/train-food-model.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  train:
+    runs-on: macos-15
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Food-101
+        run: |
+          for i in 1 2 3; do
+            curl -fL --retry 3 -o food-101.tar.gz http://data.vision.ee.ethz.ch/cvl/food-101.tar.gz && break
+            sleep 20
+          done
+          tar xzf food-101.tar.gz
+
+      - name: Make training subset
+        run: python3 tools/food101/subset.py food-101 subset 200 40
+
+      - name: Train with Create ML
+        run: swift tools/food101/TrainFoodModel.swift subset Sources/Food/FoodClassifier.mlmodel
+
+      - name: Commit the model
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Sources/Food/FoodClassifier.mlmodel
+          git commit -m "Add trained food classifier (Food-101 subset, Create ML)" || exit 0
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

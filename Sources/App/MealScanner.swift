@@ -405,6 +405,8 @@ struct MealScannerView: View {
     @State private var tray: [FoodDraft] = []
     /// Spots with a look still in progress ("processing" waits there).
     @State private var pending: Set<UUID> = []
+    /// The on-phone model's instant guess for the spot being looked at (before Claude).
+    @State private var quickGuess: FoodDraft?
     /// Scanner item id → its entry in the on-phone food memory.
     @State private var memoryLink: [UUID: UUID] = [:]
     /// The food being corrected ("this is actually…"), and what the user typed.
@@ -523,6 +525,13 @@ struct MealScannerView: View {
                                 .frame(width: r.width, height: r.height)
                                 .position(x: r.midX, y: r.midY)
                                 .allowsHitTesting(false)
+                            // The instant guess, tappable already; Claude confirms in a moment.
+                            if let guess = quickGuess {
+                                let at = CGPoint(x: min(max(r.midX, 90), geo.size.width - 90), y: max(r.minY - 24, 70))
+                                liveChip(guess, at: at, bottom: CGPoint(x: geo.size.width / 2, y: geo.size.height - 40))
+                                    .opacity(0.9)
+                                    .position(at)
+                            }
                         }
                     }
                     // Recognized foods stay on the food (anchored in the room); tap to add.
@@ -823,8 +832,16 @@ struct MealScannerView: View {
                 pending.insert(lookID)
             }
             liveBusy = true
+            // Instant guess on the phone while Claude looks (only when the model is bundled).
+            if QuickFoodGuess.isAvailable {
+                let guess = await Task.detached(priority: .userInitiated) {
+                    QuickFoodGuess.guess(frame, region: CGRect(x: 0.2, y: 0.2, width: 0.6, height: 0.45))
+                }.value
+                if let guess { withAnimation(.easeOut(duration: 0.15)) { quickGuess = QuickFoodGuess.draft(for: guess) } }
+            }
             let found = (try? await MealAnalyzer.analyze(image: frame, text: nil, live: true)) ?? []
             liveBusy = false
+            withAnimation(.easeOut(duration: 0.15)) { quickGuess = nil }
             pending.remove(lookID)
             guard image == nil else { camera.remove(lookID); continue }
 
