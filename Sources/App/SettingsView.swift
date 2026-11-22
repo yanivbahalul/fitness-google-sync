@@ -1,5 +1,6 @@
 import SwiftUI
 import AppIntents
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @EnvironmentObject private var auth: GoogleAuthManager
@@ -16,6 +17,8 @@ struct SettingsView: View {
     @AppStorage(MealModel.settingsKey) private var mealModel = MealModel.opus.rawValue
     @State private var apiKey = AnthropicKeyStore.key ?? ""
     @State private var keySaved = AnthropicKeyStore.key != nil
+    @State private var importingMemory = false
+    @State private var memoryMessage: String?
 
     private let expiry = Notifier.signingExpiry
     @AppStorage(AppSettings.activityAllSourcesKey) private var activityAllSources = true
@@ -115,8 +118,32 @@ struct SettingsView: View {
                             Label("מחק \(oldImports) רשומות Cali ישנות", systemImage: "trash")
                         }
                     }
+                    LabeledContent {
+                        Text("\(FoodMemory.shared.foods.count)")
+                    } label: {
+                        SettingLabel("מאכלים שהסורק מכיר", symbol: "brain")
+                    }
+                    if let file = FoodMemory.shared.exportFile() {
+                        ShareLink(item: file) {
+                            SettingLabel("גיבוי זיכרון המאכלים לקובץ", symbol: "square.and.arrow.up")
+                        }
+                    }
+                    Button {
+                        importingMemory = true
+                    } label: {
+                        SettingLabel("שחזור זיכרון מאכלים מקובץ", symbol: "square.and.arrow.down")
+                    }
+                    if let memoryMessage {
+                        Text(memoryMessage).font(.footnote).foregroundStyle(.secondary)
+                    }
                 } header: {
                     Text("תזונה")
+                }
+                .fileImporter(isPresented: $importingMemory, allowedContentTypes: [.json]) { result in
+                    if case .success(let url) = result {
+                        let n = FoodMemory.shared.importFile(url)
+                        memoryMessage = n > 0 ? "שוחזרו \(n) מאכלים." : "לא נמצאו מאכלים חדשים בקובץ."
+                    }
                 }
 
                 Section {

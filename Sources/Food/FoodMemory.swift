@@ -157,6 +157,41 @@ final class FoodMemory {
         save()
     }
 
+    // MARK: Backup
+
+    /// Writes the memory to a file for the share sheet (Files, AirDrop…).
+    func exportFile() -> URL? {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("HealthBridge-food-memory.json")
+        guard let data = try? JSONEncoder().encode(foods), (try? data.write(to: url, options: .atomic)) != nil else { return nil }
+        return url
+    }
+
+    /// Adds foods from an exported file: same-name foods get the new examples (no
+    /// duplicates, up to the limit); new foods are added. Returns how many foods changed.
+    @discardableResult
+    func importFile(_ url: URL) -> Int {
+        let access = url.startAccessingSecurityScopedResource()
+        defer { if access { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url),
+              let incoming = try? JSONDecoder().decode([Food].self, from: data) else { return 0 }
+        var changed = 0
+        for food in incoming {
+            if let i = foods.firstIndex(where: { $0.label == food.label }) {
+                let known = Set(foods[i].examples.map(\.print))
+                let extra = food.examples.filter { !known.contains($0.print) }
+                guard !extra.isEmpty else { continue }
+                foods[i].examples = Array((foods[i].examples + extra)
+                    .sorted { $0.quality > $1.quality }.prefix(maxExamples))
+                changed += 1
+            } else {
+                foods.append(food)
+                changed += 1
+            }
+        }
+        save()
+        return changed
+    }
+
     private func save() {
         if let data = try? JSONEncoder().encode(foods) {
             try? data.write(to: fileURL, options: .atomic)
