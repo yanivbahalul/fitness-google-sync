@@ -192,6 +192,15 @@ final class FoodMemory {
         return changed
     }
 
+    /// Forgets every food (e.g. after it learned wrong ones). Returns how many were removed.
+    @discardableResult
+    func reset() -> Int {
+        let count = foods.count
+        foods = []
+        save()
+        return count
+    }
+
     private func save() {
         if let data = try? JSONEncoder().encode(foods) {
             try? data.write(to: fileURL, options: .atomic)
