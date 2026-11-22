@@ -167,7 +167,7 @@ enum MealAnalyzer {
         let model = live ? MealModel.haiku : MealModel.current
 
         var content: [[String: Any]] = []
-        if let image, let jpeg = resized(image, maxSide: live ? 768 : 1568).jpegData(compressionQuality: live ? 0.6 : 0.8) {
+        if let image, let jpeg = resized(image, maxSide: live ? 512 : 1568).jpegData(compressionQuality: live ? 0.6 : 0.8) {
             content.append([
                 "type": "image",
                 "source": ["type": "base64", "media_type": "image/jpeg", "data": jpeg.base64EncodedString()],
@@ -181,7 +181,7 @@ enum MealAnalyzer {
 
         var body: [String: Any] = [
             "model": model.rawValue,
-            "max_tokens": live ? 4000 : 16000,
+            "max_tokens": live ? 2000 : 16000,
             // Photos need a closer look (sizes, hidden items); a text description is quick.
             // Thinking stays on either way (it can't be disabled on these models).
             "output_config": [
@@ -191,6 +191,8 @@ enum MealAnalyzer {
             "messages": [["role": "user", "content": content]],
         ]
         if model.supportsFallbacks { body["fallbacks"] = "default" }
+        // The live look-up skips thinking for speed (Haiku 5.5 allows that at low effort).
+        if live { body["thinking"] = ["type": "disabled"] }
 
         var request = URLRequest(url: URL(string: "https://api.anthropic.com/v1/messages")!)
         request.httpMethod = "POST"
