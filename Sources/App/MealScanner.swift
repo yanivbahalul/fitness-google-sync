@@ -528,7 +528,8 @@ struct MealScannerView: View {
     @State private var error: String?
     @State private var pickerItem: PhotosPickerItem?
     @State private var typing = false
-    @State private var typedText = ""
+    /// Foods found from a typed description, applied once its sheet has closed.
+    @State private var typedFoods: [FoodDraft]?
     @State private var reviewing = false
     /// What the quick live look-up sees in the camera right now.
     @State private var liveItems: [FoodDraft] = []
@@ -584,7 +585,7 @@ struct MealScannerView: View {
             }
             .toolbarBackground(.hidden, for: .navigationBar)
             .navigationDestination(isPresented: $reviewing) {
-                DraftReviewView(drafts: $drafts, source: .photo, day: day, image: image) { dismiss() }
+                DraftReviewView(drafts: $drafts, source: image == nil ? .text : .photo, day: day, image: image) { dismiss() }
                     .navigationTitle("בדיקה ושמירה")
                     .navigationBarTitleDisplayMode(.inline)
             }
@@ -610,12 +611,8 @@ struct MealScannerView: View {
             } message: {
                 Text(correcting.map { "זוהה כ\"\($0.label)\". כתוב מה זה, ואעדכן את הערכים." } ?? "")
             }
-            .alert("מה יש בצלחת?", isPresented: $typing) {
-                TextField("למשל: קפה הפוך גדול, 2 פרוסות לחם", text: $typedText)
-                Button("הוסף") { Task { await analyze(typed: typedText) } }
-                Button("ביטול", role: .cancel) {}
-            } message: {
-                Text(image == nil ? "תאר את הארוחה ואזהה אותה." : "תאר מה לא זוהה, ואוסיף את זה.")
+            .sheet(isPresented: $typing, onDismiss: applyTyped) {
+                TypedMealSheet(addingToPhoto: image != nil) { typedFoods = $0 }
             }
         }
         .environment(\.colorScheme, .dark)
@@ -792,7 +789,7 @@ struct MealScannerView: View {
             .disabled(analyzing || camera.authorized != true || image != nil)
             .accessibilityLabel("צלם ונתח")
             Spacer()
-            Button { typedText = ""; typing = true } label: {
+            Button { typing = true } label: {
                 sideLabel("הקלדה", symbol: "keyboard")
             }
             .disabled(analyzing)
@@ -808,7 +805,7 @@ struct MealScannerView: View {
                 }
             }
             HStack(spacing: 10) {
-                Button { typedText = ""; typing = true } label: {
+                Button { typing = true } label: {
                     Label(drafts.isEmpty ? "לא זוהה, לחץ כדי להקליד" : "משהו חסר? הקלד", systemImage: "keyboard")
                         .frame(maxWidth: .infinity, minHeight: DS.minTap)
                 }
@@ -1122,6 +1119,19 @@ struct MealScannerView: View {
         camera.start()
     }
 
+    /// Foods from the typed description: added to the photo's foods, or (no photo) together
+    /// with what was added while aiming, straight to the review.
+    private func applyTyped() {
+        guard let found = typedFoods else { return }
+        typedFoods = nil
+        if image != nil {
+            withAnimation { drafts += found }
+        } else {
+            drafts = tray + found
+            reviewing = true
+        }
+    }
+
     /// Analyzes the photo (and/or a typed description). Typed text after a photo adds to
     /// what was already found.
     private func analyze(typed: String?) async {
@@ -1315,4 +1325,103 @@ private func downscaled(_ image: UIImage, maxSide: CGFloat) -> UIImage {
     let format = UIGraphicsImageRendererFormat()
     format.scale = 1
     return UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
+}
+
+// MARK: - Typed meal
+
+/// "What did I eat", in the user's own words (or dictated with the keyboard's microphone);
+/// the AI works out the foods and roughly how much of each.
+private struct TypedMealSheet: View {
+    /// Adding what's missing from a photo, rather than describing a whole meal.
+    let addingToPhoto: Bool
+    let onFound: ([FoodDraft]) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var text = ""
+    @State private var working = false
+    @State private var error: String?
+    @FocusState private var focused: Bool
+
+    private static let examples = [
+        "חביתה משתי ביצים, 2 פרוסות לחם מלא וקפה הפוך",
+        "שניצל עם פירה וסלט",
+        "פיתה פלאפל עם חומוס וטחינה",
+        "קערת יוגורט עם גרנולה ובננה",
+    ]
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text(addingToPhoto
+                         ? "כתוב מה חסר בתמונה, ואוסיף את זה."
+                         : "כתוב בחופשיות מה אכלת ובערך כמה, כמו בהודעה לחבר. אפשר גם להכתיב במיקרופון של המקלדת.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    ZStack(alignment: .topLeading) {
+                        TextEditor(text: $text)
+                            .focused($focused)
+                            .scrollContentBackground(.hidden)
+                            .frame(minHeight: 140)
+                            .padding(8)
+                        if text.isEmpty {
+                            Text("למשל: בבוקר חביתה משתי ביצים ו־2 פרוסות לחם, בצהריים שניצל עם אורז")
+                                .foregroundStyle(.tertiary)
+                                .padding(.horizontal, 13)
+                                .padding(.vertical, 16)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .background(Color(.secondarySystemGroupedBackground),
+                                in: RoundedRectangle(cornerRadius: DS.tileRadius, style: .continuous))
+                    .accessibilityLabel("מה אכלת")
+                    if text.isEmpty && !addingToPhoto {
+                        Text("דוגמאות").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+                        ForEach(Self.examples, id: \.self) { example in
+                            Button { text = example } label: {
+                                Label(example, systemImage: "text.bubble")
+                                    .font(.subheadline)
+                                    .frame(maxWidth: .infinity, minHeight: DS.minTap, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    if let error {
+                        Text(error).font(.footnote).foregroundStyle(.red)
+                    }
+                }
+                .padding(DS.pagePadding)
+            }
+            .safeAreaInset(edge: .bottom) {
+                PrimaryButton(title: working ? "מזהה…" : "זהה", symbol: working ? nil : "sparkles", busy: working) {
+                    Task { await run() }
+                }
+                .disabled(working || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .padding(DS.pagePadding)
+                .background(.bar)
+            }
+            .navigationTitle(addingToPhoto ? "משהו חסר?" : "מה אכלת?")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("ביטול") { dismiss() } }
+            }
+            .onAppear { focused = true }
+        }
+    }
+
+    private func run() async {
+        working = true
+        error = nil
+        defer { working = false }
+        do {
+            let found = try await MealAnalyzer.analyze(image: nil, text: text)
+            guard !found.isEmpty else {
+                error = "לא זיהיתי מאכלים. נסה לפרט קצת יותר: מה אכלת ובערך כמה."
+                return
+            }
+            onFound(found)
+            dismiss()
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
 }
