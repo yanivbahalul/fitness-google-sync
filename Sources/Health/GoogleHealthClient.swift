@@ -134,28 +134,31 @@ final class GoogleHealthClient {
 
     /// One total per civil day in [start, end) for `dataType`, read from the
     /// rollup value stored under `valueKey` (e.g. "floors").
+    /// `family` overrides the data-source family (e.g. "all-sources"); used by the steps check.
     func dailyRollUp(dataType: String, valueKey: String, from start: Date, to end: Date,
-                     chunkDays: Int = 30) async throws -> [(day: Date, value: Double)] {
+                     chunkDays: Int = 30, family: String? = nil) async throws -> [(day: Date, value: Double)] {
         // The API allows at most 90 days per request (14 for total-calories, heart-rate,
         // active-minutes and calories-in-heart-rate-zone).
         var results: [(day: Date, value: Double)] = []
         var chunkStart = start
         while chunkStart < end {
             let chunkEnd = min(end, Calendar.current.date(byAdding: .day, value: chunkDays, to: chunkStart)!)
-            results += try await dailyRollUpChunk(dataType: dataType, valueKey: valueKey, from: chunkStart, to: chunkEnd)
+            results += try await dailyRollUpChunk(dataType: dataType, valueKey: valueKey, from: chunkStart, to: chunkEnd,
+                                                  family: family.map { "users/me/dataSourceFamilies/\($0)" } ?? dataSourceFamily)
             chunkStart = chunkEnd
         }
         return results
     }
 
-    private func dailyRollUpChunk(dataType: String, valueKey: String, from start: Date, to end: Date) async throws -> [(day: Date, value: Double)] {
+    private func dailyRollUpChunk(dataType: String, valueKey: String, from start: Date, to end: Date,
+                                  family: String) async throws -> [(day: Date, value: Double)] {
         var request = URLRequest(url: URL(string: base + dataType + "/dataPoints:dailyRollUp")!)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let body: [String: Any] = [
             "range": ["start": GoogleHealthJSON.civilDateTime(start), "end": GoogleHealthJSON.civilDateTime(end)],
             "windowSizeDays": 1,
-            "dataSourceFamily": dataSourceFamily,
+            "dataSourceFamily": family,
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
