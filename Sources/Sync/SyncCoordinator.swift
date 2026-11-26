@@ -518,6 +518,32 @@ final class SyncCoordinator: ObservableObject {
         var matches: Bool { google == stepsBridge }
     }
 
+    /// Google's daily steps for `day` as each data-source family counts them: everything
+    /// (what Google's app may show), Google's own sources (what is synced) and trackers only.
+    /// nil = that family couldn't be read.
+    struct FamilySteps: Identifiable {
+        let name: String
+        let family: String
+        let steps: Int?
+        var id: String { family }
+    }
+
+    func stepsBySourceFamily(on day: Date) async -> [FamilySteps] {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: day)
+        let end = calendar.date(byAdding: .day, value: 1, to: start)!
+        var result: [FamilySteps] = []
+        for (name, family) in [("כל המקורות", "all-sources"),
+                               ("מקורות Google (מסונכרן)", "google-sources"),
+                               ("צמיד/שעון בלבד", "google-wearables")] {
+            let value = try? await healthClient.dailyRollUp(dataType: "steps", valueKey: "steps", from: start, to: end,
+                                                            family: family)
+            result.append(FamilySteps(name: name, family: family,
+                                      steps: value.map { Int(safe: $0.map(\.value).reduce(0, +).rounded()) }))
+        }
+        return result
+    }
+
     /// Compares, per day, Google Health's daily total with what HealthBridge wrote and with
     /// Apple Health's displayed total.
     func stepsComparison(days: Int = 7) async throws -> [StepsDay] {

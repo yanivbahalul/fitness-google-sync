@@ -337,6 +337,7 @@ struct HistoryView: View {
 struct StepsCheckView: View {
     @EnvironmentObject private var sync: SyncCoordinator
     @State private var rows: [SyncCoordinator.StepsDay] = []
+    @State private var families: [SyncCoordinator.FamilySteps] = []
     @State private var loading = false
     @State private var error: String?
 
@@ -377,6 +378,19 @@ struct StepsCheckView: View {
                 }
             }
 
+            if !families.isEmpty {
+                Section {
+                    ForEach(families) { f in
+                        LabeledContent(f.name, value: f.steps.map { $0.formatted() } ?? "—")
+                            .monospacedDigit()
+                    }
+                } header: {
+                    Text("אתמול לפי מקור ב‑Google")
+                } footer: {
+                    Text("HealthBridge מסנכרנת את \"מקורות Google\". אם \"כל המקורות\" הוא המספר שרואים באפליקציה של Google, ההפרש מגיע ממקור נוסף שמחובר ל‑Google.")
+                }
+            }
+
             Section {
                 Button {
                     Task {
@@ -413,6 +427,8 @@ struct StepsCheckView: View {
         defer { loading = false }
         do {
             rows = try await sync.stepsComparison(days: 7)
+            let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: Date())!
+            families = await sync.stepsBySourceFamily(on: yesterday)
         } catch {
             self.error = "הבדיקה נכשלה: \(error.localizedDescription)"
         }
