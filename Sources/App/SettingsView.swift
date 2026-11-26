@@ -338,6 +338,7 @@ struct StepsCheckView: View {
     @EnvironmentObject private var sync: SyncCoordinator
     @State private var rows: [SyncCoordinator.StepsDay] = []
     @State private var families: [SyncCoordinator.FamilySteps] = []
+    @State private var hourly: [SyncCoordinator.HourSteps] = []
     @State private var loading = false
     @State private var error: String?
 
@@ -391,6 +392,23 @@ struct StepsCheckView: View {
                 }
             }
 
+            if !hourly.isEmpty {
+                Section {
+                    ForEach(hourly) { h in
+                        LabeledContent(h.hour.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute().locale(.he)),
+                                       value: h.steps.formatted())
+                            .monospacedDigit()
+                    }
+                    LabeledContent("סה״כ לפי שעות", value: hourly.map(\.steps).reduce(0, +).formatted())
+                        .font(.body.weight(.semibold))
+                        .monospacedDigit()
+                } header: {
+                    Text("אתמול לפי שעה (מה ש‑Google מוסרת)")
+                } footer: {
+                    Text("השווה לגרף השעתי של אתמול באפליקציה של Google: שעה שבה המספר שם גבוה יותר היא המקום שבו חסרים הצעדים.")
+                }
+            }
+
             Section {
                 Button {
                     Task {
@@ -429,6 +447,7 @@ struct StepsCheckView: View {
             rows = try await sync.stepsComparison(days: 7)
             let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: Date())!
             families = await sync.stepsBySourceFamily(on: yesterday)
+            hourly = ((try? await sync.stepsByHour(on: yesterday)) ?? []).filter { $0.steps > 0 }
         } catch {
             self.error = "הבדיקה נכשלה: \(error.localizedDescription)"
         }

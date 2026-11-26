@@ -544,6 +544,26 @@ final class SyncCoordinator: ObservableObject {
         return result
     }
 
+    /// Google's steps for `day` hour by hour (local hours), to compare bar by bar with the
+    /// hourly chart in Google's app and find where a difference in the daily total comes from.
+    struct HourSteps: Identifiable {
+        let hour: Date
+        let steps: Int
+        var id: Date { hour }
+    }
+
+    func stepsByHour(on day: Date) async throws -> [HourSteps] {
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: day)
+        let end = calendar.date(byAdding: .day, value: 1, to: start)!
+        let hours = try await healthClient.rollUp(dataType: "steps", valueKey: "steps", from: start, to: end,
+                                                  windowSeconds: 3600, pick: GoogleHealthJSON.sumNumber)
+        return hours.filter { $0.start >= start && $0.start < end }
+            .map { HourSteps(hour: calendar.dateInterval(of: .hour, for: $0.start)?.start ?? $0.start,
+                             steps: Int(safe: $0.value.rounded())) }
+            .sorted { $0.hour < $1.hour }
+    }
+
     /// Compares, per day, Google Health's daily total with what HealthBridge wrote and with
     /// Apple Health's displayed total.
     func stepsComparison(days: Int = 7) async throws -> [StepsDay] {
